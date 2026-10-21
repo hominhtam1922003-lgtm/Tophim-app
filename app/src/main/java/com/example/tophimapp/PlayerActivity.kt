@@ -19,16 +19,20 @@ import java.io.ByteArrayInputStream
 import kotlin.concurrent.thread
 
 /**
- * Trinh phat video nhieu server, thu tu uu tien (theo khao sat web that):
- * 1) HLS thang: thuoc tinh data-embedbackup tren trang xem la file .m3u8
- *    cua may chu du phong (play.vinahost.id) -> phat bang trang HLS noi bo
- *    (hls.js), sach quang cao vi chi tai dung luong video.
- * 2) Khung nhung playembed.vip (data-embed) kem Referer cua trang xem,
- *    chan request quang cao (AdBlock), cam popup, khoa khung chinh,
- *    don overlay quang cao bang JS chay lien tuc.
- * 3) Trang xem goc tren web nguon (van ap AdBlock) - du phong cuoi.
- * Loi o server nao thi tu dong chuyen server tiep; nguoi dung cung bam
- * duoc nut "Doi server" o goc phai.
+ * Trinh phat video - NGUYEN TAC TU BAN 1.5 ("phuong an triet de" nguoi
+ * dung da duyet): CHI phat luong video truc tiep (.m3u8/.mp4) bang
+ * player noi bo cua app. TUYET DOI khong nhung iframe player cua ben
+ * thu ba (playembed) nua: do la iframe khac nguon, quang cao ben trong
+ * no (video mo dau, banner de) khong the nao loc tu ben ngoai - do
+ * chinh la cua ro quang cao duy nhat con sot o ban 1.4.1.
+ * Nguon phat lay bang 3 tang:
+ * 1) data-embedbackup trong HTML trang xem = HLS thang.
+ * 2) Bo do chay trang xem trong WebView ngam va BAT MOI REQUEST
+ *    .m3u8/.mp4 o tang mang - ke ca request phat ra tu ben trong
+ *    iframe playembed: DOM thi web giau duoc, nhung muon phat phim
+ *    thi luong video bat buoc qua mang va bi hung o do.
+ * 3) Playlist HLS con bi loc quang cao ghep o dau bang PlaylistCleaner.
+ * Khong lay duoc luong sach thi bao ro, khong mo iframe/trang web.
  */
 class PlayerActivity : AppCompatActivity() {
 
@@ -36,15 +40,6 @@ class PlayerActivity : AppCompatActivity() {
         const val EXTRA_WATCH_URL = "watch_url"
         const val EXTRA_TITLE = "movie_title"
         const val EXTRA_EPISODE = "episode_name"
-
-
-        // Xoa lien ket target=_blank (nhe - dung cho trang xem goc)
-        private const val CLEAN_LINKS_JS = """
-            (function(){
-              document.querySelectorAll('a[target="_blank"]').forEach(function(a){ a.remove(); });
-              return 'ok';
-            })()
-        """
 
         // Do tim luong phat tren trang xem dang chay that: dia chi + THOI
         // LUONG cua the <video> + moi tai nguyen .m3u8/.mp4 trang da tai
@@ -86,6 +81,19 @@ class PlayerActivity : AppCompatActivity() {
             })()
         """
 
+        // Bam nut hien player cua trang xem (mot so trang chi tao
+        // iframe/player sau khi nguoi dung bam nut nay) de player ben
+        // trong chiu tai luong video that -> bo do bat duoc o tang mang
+        private const val PLAY_TRIGGER_JS = """
+            (function(){
+              var b = document.querySelector(
+                '#btnShowPlayer,[id*=showPlayer],[id*=show-player],' +
+                '[class*=showPlayer],[class*=show-player]');
+              if (b){ try{ b.click(); return 'clicked'; }catch(e){} }
+              return 'none';
+            })()
+        """
+
         // Tat tieng VINH VIEN moi the video/audio trong WebView do nguon
         // (ke ca the moi tao sau nay): ban 1.4.1/1.4.2 de WebView ngam tu
         // phat ca TIENG cua quang cao co bac trong luc do - nguoi dung
@@ -106,38 +114,9 @@ class PlayerActivity : AppCompatActivity() {
               return 'ok';
             })()
         """
-
-
-
-        // Don manh cho trang nhung playembed: xoa link _blank + an overlay
-        // quang cao phu rong man hinh (ke ca phan tu xuat hien sau)
-        private const val CLEAN_EMBED_JS = """
-            (function(){
-              if (window.__museClean) return 'already';
-              window.__museClean = true;
-              function clean(){
-                document.querySelectorAll('a[target="_blank"]').forEach(function(a){ a.remove(); });
-                var W = window.innerWidth, H = window.innerHeight;
-                document.querySelectorAll('div,ins,section,aside').forEach(function(el){
-                  try{
-                    var s = getComputedStyle(el);
-                    if ((s.position === 'fixed' || s.position === 'absolute') &&
-                        !el.querySelector('video') &&
-                        el.offsetWidth > W * 0.6 && el.offsetHeight > H * 0.35 &&
-                        (el.querySelector('a') || el.querySelector('img'))){
-                      el.style.display = 'none';
-                    }
-                  }catch(e){}
-                });
-              }
-              clean();
-              new MutationObserver(clean).observe(document.documentElement, {childList:true, subtree:true});
-              return 'ok';
-            })()
-        """
     }
 
-    private enum class Kind { HLS, DIRECT, EMBED }
+    private enum class Kind { HLS, DIRECT }
     private data class Candidate(val kind: Kind, val url: String)
 
     private lateinit var webView: WebView
@@ -150,6 +129,9 @@ class PlayerActivity : AppCompatActivity() {
     private var candidates: List<Candidate> = emptyList()
     private var candidateIndex = 0
     private var errorToastShown = false
+    // Danh dau moi lan doi ung vien: ket qua loc playlist (chay nen)
+    // chi duoc ap dung neu chua doi sang ung vien khac
+    private var playToken = 0
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -291,39 +273,6 @@ class PlayerActivity : AppCompatActivity() {
         """.trimIndent()
     }
 
-    /** Trang boc noi bo cho khung nhung: iframe chiem toan man hinh. */
-    private fun embedHtml(embedUrl: String): String {
-        val src = embedUrl.replace("&", "&amp;").replace("\"", "&quot;")
-        return """
-            <!DOCTYPE html>
-            <html><head>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-              html,body{margin:0;padding:0;background:#000;height:100%;overflow:hidden}
-              iframe{position:fixed;inset:0;width:100%;height:100%;border:0}
-            </style>
-            </head><body>
-            <iframe src="$src" allowfullscreen
-              allow="autoplay; fullscreen; encrypted-media; picture-in-picture"></iframe>
-            </body></html>
-        """.trimIndent()
-    }
-
-    /** playembed tra trang chan Cloudflare -> tu chuyen server tiep theo. */
-    private fun checkEmbedBlocked(view: WebView?) {
-        view?.evaluateJavascript(
-            "(function(){return (document.body?document.body.innerText:'').slice(0,300);})()"
-        ) { text ->
-            val t = text?.lowercase() ?: ""
-            if (t.contains("you have been blocked") ||
-                t.contains("unable to access") ||
-                t.contains("attention required")
-            ) {
-                nextCandidate(auto = true)
-            }
-        }
-    }
-
     /** Lay cac nguon phat tu trang xem: Jsoup truoc, WebView du phong. */
     private fun resolveAndPlay() {
         progress.visibility = View.VISIBLE
@@ -335,7 +284,10 @@ class PlayerActivity : AppCompatActivity() {
                 // Du phong WebView
             }
             runOnUiThread {
-                if (links.hls.isNotEmpty() || links.embed.isNotEmpty()) {
+                // Ban 1.5: chi HLS thang moi dung ngay; co moi embed
+                // thi KHONG nhung iframe nua ma di tiep xuong bo do de
+                // bat luong that o tang mang
+                if (links.hls.isNotEmpty()) {
                     startWith(links)
                 } else {
                     WebFetcher.fetchHtml(this, watchUrl) { html ->
@@ -349,7 +301,7 @@ class PlayerActivity : AppCompatActivity() {
                                 // bo qua
                             }
                         }
-                        if (l2.hls.isNotEmpty() || l2.embed.isNotEmpty()) {
+                        if (l2.hls.isNotEmpty()) {
                             startWith(l2)
                         } else {
                             // Boc tinh khong thay gi: phim dung trinh phat
@@ -365,9 +317,9 @@ class PlayerActivity : AppCompatActivity() {
     private fun startWith(links: PlayerLinks) {
         val list = ArrayList<Candidate>()
         if (links.hls.isNotEmpty()) list.add(Candidate(Kind.HLS, links.hls))
-        if (links.embed.isNotEmpty()) list.add(Candidate(Kind.EMBED, links.embed))
-        // KHONG con phuong an "mo nguyen trang xem cua web" nhu truoc:
-        // trang do day quang cao co bac, nguoi dung phan anh rat gat.
+        // Ban 1.5: links.embed co duoc cung KHONG dung - khong nhung
+        // iframe playembed nua (xem ghi chu dau file). KHONG phuong an
+        // "mo nguyen trang xem cua web": trang do day quang cao co bac.
         candidates = list
         if (list.isEmpty()) {
             probeRuntime()
@@ -425,17 +377,60 @@ class PlayerActivity : AppCompatActivity() {
             javaScriptCanOpenWindowsAutomatically = false
             userAgentString = TophimSource.UA
         }
+        // BAT LUONG O TANG MANG (moi o ban 1.5): moi request tai file
+        // video (.m3u8/.mp4) tu BAT KY frame nao trong trang - ke ca
+        // tu ben trong iframe playembed - deu bi ghi lai o day.
+        // shouldInterceptRequest chay tren luong nen nen dung tap hop
+        // dong bo; chi QUAN SAT roi cho request di tiep, khong chan.
+        val netHls = java.util.Collections.synchronizedSet(
+            java.util.LinkedHashSet<String>()
+        )
+        val netMp4 = java.util.Collections.synchronizedSet(
+            java.util.LinkedHashSet<String>()
+        )
+        val lastNetAt = java.util.concurrent.atomic.AtomicLong(0)
+        val watchHost = hostOf(watchUrl)
+        probe.webChromeClient = object : WebChromeClient() {
+            // Cam popup trong WebView do (QC khong mo trang moi)
+            override fun onCreateWindow(
+                view: WebView?, isDialog: Boolean, isUserGesture: Boolean,
+                resultMsg: android.os.Message?
+            ): Boolean = false
+        }
         probe.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(
                 view: WebView?, request: WebResourceRequest?
             ): WebResourceResponse? {
-                return if (AdBlock.isAd(request?.url?.toString())) {
-                    WebResourceResponse(
+                val u = request?.url?.toString() ?: return null
+                if (AdBlock.isAd(u)) {
+                    return WebResourceResponse(
                         "text/plain", "utf-8", ByteArrayInputStream(ByteArray(0))
                     )
-                } else {
-                    null
                 }
+                val path = u.substringBefore("?").lowercase()
+                if (path.endsWith(".m3u8")) {
+                    netHls.add(u)
+                    lastNetAt.set(System.currentTimeMillis())
+                } else if (path.endsWith(".mp4")) {
+                    netMp4.add(u)
+                    lastNetAt.set(System.currentTimeMillis())
+                }
+                return null
+            }
+
+            // Khoa khung chinh cua WebView do: chi o lai host trang xem
+            // (+ host player/cloudflare), khong bi popunder cuop trang
+            override fun shouldOverrideUrlLoading(
+                view: WebView?, request: WebResourceRequest?
+            ): Boolean {
+                val url = request?.url ?: return false
+                if (request.isForMainFrame) {
+                    val h = url.host ?: ""
+                    val ok = h == watchHost || h.endsWith("playembed.vip") ||
+                        h.endsWith("cloudflare.com") || h.isEmpty()
+                    if (!ok) return true
+                }
+                return false
             }
 
             // Trang vua tai xong la tat tieng ngay (va lap lai lien tuc)
@@ -455,8 +450,8 @@ class PlayerActivity : AppCompatActivity() {
         var movieUrl = ""
         var resHls = ""
         var resMp4 = ""
-        var embedUrl = ""
         var lastSrc = ""
+        var triggerTries = 0
 
         fun finishProbe() {
             if (probeDone) return
@@ -472,28 +467,36 @@ class PlayerActivity : AppCompatActivity() {
                 // bo qua
             }
             val list = ArrayList<Candidate>()
-            when {
-                movieUrl.isNotEmpty() -> {
-                    if (movieUrl.contains(".m3u8")) {
-                        list.add(Candidate(Kind.HLS, movieUrl))
-                    } else {
-                        list.add(Candidate(Kind.DIRECT, movieUrl))
-                    }
+            fun addStream(u: String) {
+                if (u.isEmpty() || adUrls.contains(u)) return
+                if (list.any { it.url == u }) return
+                if (u.contains(".m3u8")) {
+                    list.add(Candidate(Kind.HLS, u))
+                } else if (u.contains(".mp4")) {
+                    list.add(Candidate(Kind.DIRECT, u))
                 }
-                resHls.isNotEmpty() && !adUrls.contains(resHls) ->
-                    list.add(Candidate(Kind.HLS, resHls))
-                lastSrc.isNotEmpty() && !adUrls.contains(lastSrc) -> {
-                    if (lastSrc.contains(".m3u8")) {
-                        list.add(Candidate(Kind.HLS, lastSrc))
-                    } else {
-                        list.add(Candidate(Kind.DIRECT, lastSrc))
-                    }
-                }
-                resMp4.isNotEmpty() && !adUrls.contains(resMp4) ->
-                    list.add(Candidate(Kind.DIRECT, resMp4))
-                embedUrl.isNotEmpty() ->
-                    list.add(Candidate(Kind.EMBED, embedUrl))
             }
+            if (movieUrl.isNotEmpty()) {
+                // Da xac nhan bang thoi luong >= 180 giay: phat dung no
+                addStream(movieUrl)
+            } else {
+                // Uu tien: luong bat o tang mang MUON nhat (player
+                // thuong tai quang cao truoc roi moi chot luong phim),
+                // luong the video gan nhat, playlist trang da tai san,
+                // luong mang som nhat lam du phong doi server, MP4 cuoi
+                val nets = synchronized(netHls) { ArrayList(netHls) }
+                    .filter { !adUrls.contains(it) }
+                if (nets.isNotEmpty()) addStream(nets.last())
+                addStream(lastSrc)
+                addStream(resHls)
+                if (nets.size > 1) addStream(nets.first())
+                addStream(resMp4)
+                val mp4First = synchronized(netMp4) { netMp4.firstOrNull() } ?: ""
+                addStream(mp4First)
+            }
+            // Ban 1.5: het phim thi thoi - KHONG con du phong iframe
+            // playembed (cua ro quang cao), danh sach rong -> bao
+            // "chua co nguon sach" thay vi phat kem quang cao
             candidates = list
             if (list.isEmpty()) {
                 showNoSource()
@@ -540,16 +543,22 @@ class PlayerActivity : AppCompatActivity() {
                             else if (u.contains(".mp4") && resMp4.isEmpty()) resMp4 = u
                         }
                     }
-                    val ifr = o.optString("ifr")
-                    if (ifr.startsWith("http") &&
-                        (ifr.contains("player") || ifr.contains("embed"))
-                    ) {
-                        embedUrl = ifr
-                    }
                 } catch (e: Exception) {
                     // Chua doc duoc: thu lai sau
                 }
                 val elapsed = System.currentTimeMillis() - probeStart
+                // Trang chua tu tao player thi bam nut hien player cua
+                // no (toi da 2 lan) de luong that lo ra o tang mang
+                if (triggerTries < 2 &&
+                    ((elapsed > 4000 && triggerTries == 0) ||
+                        (elapsed > 16000 && triggerTries == 1))
+                ) {
+                    triggerTries++
+                    probe.evaluateJavascript(PLAY_TRIGGER_JS, null)
+                }
+                val netCount = synchronized(netHls) { netHls.size }
+                val netQuiet = lastNetAt.get() > 0 &&
+                    System.currentTimeMillis() - lastNetAt.get() > 8000
                 when {
                     // Da thay phim that (dai >= 180 giay): phat ngay
                     movieUrl.isNotEmpty() -> finishProbe()
@@ -557,7 +566,9 @@ class PlayerActivity : AppCompatActivity() {
                     // cao dang phat) va da quan sat du lau: dung luon
                     resHls.isNotEmpty() && !adUrls.contains(resHls) &&
                         adUrls.isNotEmpty() && elapsed > 15000 -> finishProbe()
-                    embedUrl.isNotEmpty() && elapsed > 20000 -> finishProbe()
+                    // Luong o tang mang da on dinh (8 giay khong co
+                    // luong moi): player da chot nguon -> phat
+                    netCount > 0 && netQuiet && elapsed > 12000 -> finishProbe()
                     elapsed > 45000 -> finishProbe()
                     else -> handler.postDelayed({ pollProbe() }, 2000)
                 }
@@ -590,26 +601,27 @@ class PlayerActivity : AppCompatActivity() {
         when (c.kind) {
             Kind.HLS -> {
                 targetHost = ""
-                webView.loadDataWithBaseURL(
-                    TophimSource.BASE + "/", hlsHtml(c.url), "text/html", "utf-8", null
-                )
+                // Loc quang cao ghep trong playlist truoc khi phat
+                // (chay nen; playlist sach/khong loc duoc thi phat
+                // thang nhu cu - xem PlaylistCleaner)
+                val token = ++playToken
+                thread {
+                    val res = PlaylistCleaner.clean(c.url, watchUrl)
+                    runOnUiThread {
+                        if (token == playToken && !isFinishing) {
+                            webView.loadDataWithBaseURL(
+                                TophimSource.BASE + "/",
+                                hlsHtml(res.playUrl, res.overrideText),
+                                "text/html", "utf-8", null
+                            )
+                        }
+                    }
+                }
             }
             Kind.DIRECT -> {
                 targetHost = ""
                 webView.loadDataWithBaseURL(
                     TophimSource.BASE + "/", directHtml(c.url), "text/html", "utf-8", null
-                )
-            }
-            Kind.EMBED -> {
-                targetHost = ""
-                // Boc khung nhung trong 1 trang noi bo co iframe chiem
-                // 100% man hinh: mo thang URL playembed nhu truoc lam
-                // trang cua no tu co khung hinh vao giua, thua vien den
-                // va thanh tien do bi day khoi tam nhin. Base URL dat la
-                // trang xem de iframe ke thua Referer cua trang phim
-                // (may chu video chi cho phat khi duoc "gioi thieu").
-                webView.loadDataWithBaseURL(
-                    watchUrl, embedHtml(c.url), "text/html", "utf-8", null
                 )
             }
         }
@@ -640,9 +652,21 @@ class PlayerActivity : AppCompatActivity() {
         ""
     }
 
-    /** Trang HTML noi bo phat HLS bang hls.js; loi thi bao ve PlayerBridge. */
-    private fun hlsHtml(m3u8: String): String {
+    /**
+     * Trang HTML noi bo phat HLS bang hls.js; loi thi bao ve
+     * PlayerBridge. Neu overrideText co gia tri (playlist da duoc
+     * PlaylistCleaner cat quang cao ghep), nap playlist tu blob noi
+     * dung do thay vi tu URL goc.
+     */
+    private fun hlsHtml(m3u8: String, overrideText: String?): String {
         val src = m3u8.replace("\\", "\\\\").replace("\"", "\\\"")
+        val overrideJs = if (overrideText != null) {
+            "var pl = " + org.json.JSONObject.quote(overrideText) + ";" +
+                "src = URL.createObjectURL(" +
+                "new Blob([pl], {type:'application/vnd.apple.mpegurl'}));"
+        } else {
+            ""
+        }
         return """
             <!DOCTYPE html>
             <html><head>
@@ -654,6 +678,7 @@ class PlayerActivity : AppCompatActivity() {
             <script>
               var v = document.getElementById('v');
               var src = "$src";
+              $overrideJs
               function fail(){ if (window.PlayerBridge) { PlayerBridge.onError(); } }
               if (window.Hls && Hls.isSupported()) {
                 var h = new Hls();
