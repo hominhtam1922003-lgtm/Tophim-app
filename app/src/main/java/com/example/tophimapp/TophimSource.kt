@@ -83,11 +83,15 @@ object TophimSource {
 
     fun fetchHome(): List<Movie> = parseList(fetchDoc("$BASE/"))
 
-    /** Duong dan danh muc (da xac thuc tren web that 22/10/2026). */
+    /**
+     * Duong dan danh muc: uu tien dung link menu chinh cua web that
+     * (/phim-le, /phim-bo, /phim-18 - xac thuc nguyen van 22/10/2026),
+     * cac dang du phong xep sau.
+     */
     fun categoryPaths(kind: String): List<String> = when (kind) {
-        "series" -> listOf("/danh-sach/phim-bo", "/phim-bo")
-        "adult" -> listOf("/the-loai/phim-18-1", "/the-loai/phim-18-2")
-        else -> listOf("/danh-sach/phim-le", "/phim-le")
+        "series" -> listOf("/phim-bo", "/danh-sach/phim-bo")
+        "adult" -> listOf("/phim-18", "/the-loai/phim-18-1", "/the-loai/phim-18-2")
+        else -> listOf("/phim-le", "/danh-sach/phim-le")
     }
 
     fun fetchCategory(kind: String): List<Movie> {
