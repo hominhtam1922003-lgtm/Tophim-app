@@ -19,10 +19,51 @@
         android:layout_height="0dp"
         android:layout_weight="1" />
 
-    <com.google.android.material.bottomnavigation.BottomNavigationView
-        xmlns:app="http://schemas.android.com/apk/res-auto"
-        android:id="@+id/bottomNav"
+    <!-- Thanh tab tu dung: BottomNavigationView cua Material chi cho toi da
+         5 muc, them muc thu 6 (18+) la sap app ngay khi mo. Thanh nay chua
+         du 6 the, MainActivity tu xu ly bam + to mau the dang chon. -->
+    <LinearLayout
+        android:id="@+id/bottomBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        app:menu="@menu/bottom_nav" />
+        android:background="?attr/colorSurface"
+        android:elevation="8dp"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/tabHome"
+            style="@style/BottomTab"
+            android:drawableTop="@android:drawable/ic_menu_gallery"
+            android:text="Trang chủ" />
+
+        <TextView
+            android:id="@+id/tabSingle"
+            style="@style/BottomTab"
+            android:drawableTop="@android:drawable/ic_menu_view"
+            android:text="Phim lẻ" />
+
+        <TextView
+            android:id="@+id/tabSeries"
+            style="@style/BottomTab"
+            android:drawableTop="@android:drawable/ic_menu_today"
+            android:text="Phim bộ" />
+
+        <TextView
+            android:id="@+id/tabAdult"
+            style="@style/BottomTab"
+            android:drawableTop="@android:drawable/ic_menu_myplaces"
+            android:text="18+" />
+
+        <TextView
+            android:id="@+id/tabFavorites"
+            style="@style/BottomTab"
+            android:drawableTop="@android:drawable/star_big_on"
+            android:text="Yêu thích" />
+
+        <TextView
+            android:id="@+id/tabHistory"
+            style="@style/BottomTab"
+            android:drawableTop="@android:drawable/ic_menu_recent_history"
+            android:text="Lịch sử" />
+    </LinearLayout>
 </LinearLayout>

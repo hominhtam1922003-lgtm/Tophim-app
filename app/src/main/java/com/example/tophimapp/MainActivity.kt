@@ -2,8 +2,11 @@ package com.example.tophimapp
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
 import androidx.work.Constraints
@@ -11,38 +14,71 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
-import com.google.android.material.bottomnavigation.BottomNavigationView
 import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
+
+    private lateinit var tabs: List<TextView>
+    private var selectedTab: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        val bottomNav = findViewById<BottomNavigationView>(R.id.bottomNav)
-        if (savedInstanceState == null) show(HomeFragment())
-        bottomNav.setOnItemSelectedListener { item ->
-            when (item.itemId) {
-                R.id.nav_home -> show(HomeFragment())
-                R.id.nav_single -> show(BrowseFragment.newInstance(BrowseFragment.KIND_SINGLE))
-                R.id.nav_series -> show(BrowseFragment.newInstance(BrowseFragment.KIND_SERIES))
-                R.id.nav_adult -> show(BrowseFragment.newInstance(BrowseFragment.KIND_ADULT))
-                R.id.nav_favorites -> {
-                    // Thong bao tap moi gan voi phim yeu thich:
-                    // chua co quyen thi xin lai tai day (Android 13+)
-                    ensureNotificationPermission()
-                    show(FavoritesFragment())
-                }
-                R.id.nav_history -> show(HistoryFragment())
-            }
-            true
+        val tabHome = findViewById<TextView>(R.id.tabHome)
+        val tabSingle = findViewById<TextView>(R.id.tabSingle)
+        val tabSeries = findViewById<TextView>(R.id.tabSeries)
+        val tabAdult = findViewById<TextView>(R.id.tabAdult)
+        val tabFavorites = findViewById<TextView>(R.id.tabFavorites)
+        val tabHistory = findViewById<TextView>(R.id.tabHistory)
+        tabs = listOf(tabHome, tabSingle, tabSeries, tabAdult, tabFavorites, tabHistory)
+
+        tabHome.setOnClickListener { select(tabHome); show(HomeFragment()) }
+        tabSingle.setOnClickListener {
+            select(tabSingle)
+            show(BrowseFragment.newInstance(BrowseFragment.KIND_SINGLE))
+        }
+        tabSeries.setOnClickListener {
+            select(tabSeries)
+            show(BrowseFragment.newInstance(BrowseFragment.KIND_SERIES))
+        }
+        tabAdult.setOnClickListener {
+            select(tabAdult)
+            show(BrowseFragment.newInstance(BrowseFragment.KIND_ADULT))
+        }
+        tabFavorites.setOnClickListener {
+            // Thong bao tap moi gan voi phim yeu thich:
+            // chua co quyen thi xin lai tai day (Android 13+)
+            ensureNotificationPermission()
+            select(tabFavorites)
+            show(FavoritesFragment())
+        }
+        tabHistory.setOnClickListener { select(tabHistory); show(HistoryFragment()) }
+
+        if (savedInstanceState == null) {
+            select(tabHome)
+            show(HomeFragment())
         }
 
         ensureNotificationPermission()
         scheduleNewEpisodeChecks()
         // Xac dinh ten mien nguon dang song (chong web doi ten mien)
         RemoteConfig.resolveAsync(applicationContext)
+    }
+
+    /** To mau the dang chon (dam + mau chinh), cac the con lai ve xam. */
+    private fun select(tab: TextView) {
+        selectedTab = tab
+        val primary = androidx.core.content.ContextCompat.getColor(this, R.color.tab_selected)
+        for (t in tabs) {
+            if (t == tab) {
+                t.setTextColor(primary)
+                t.setTypeface(null, Typeface.BOLD)
+            } else {
+                t.setTextColor(Color.GRAY)
+                t.setTypeface(null, Typeface.NORMAL)
+            }
+        }
     }
 
     private fun show(fragment: Fragment) {
