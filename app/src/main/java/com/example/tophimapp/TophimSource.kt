@@ -111,6 +111,25 @@ object TophimSource {
                 return v
             }
         }
+        // Ban di dong cua web (app dung UA dien thoai) de link anh that
+        // trong srcset cua the img - thieu nhanh nay la mat anh bia hang
+        // loat nhu anh chup nguoi dung gui
+        val srcset = img.attr("srcset")
+        if (srcset.isNotBlank()) {
+            val first = srcset.split(",").firstOrNull()?.trim()
+                ?.split(" ")?.firstOrNull() ?: ""
+            if (first.startsWith("http")) return first
+            if (first.startsWith("//")) return "https:$first"
+            if (first.startsWith("/")) return BASE + first
+        }
+        val dataSrcset = img.attr("data-srcset")
+        if (dataSrcset.isNotBlank()) {
+            val first = dataSrcset.split(",").firstOrNull()?.trim()
+                ?.split(" ")?.firstOrNull() ?: ""
+            if (first.startsWith("http")) return first
+            if (first.startsWith("//")) return "https:$first"
+            if (first.startsWith("/")) return BASE + first
+        }
         return img.absUrl("src")
     }
 

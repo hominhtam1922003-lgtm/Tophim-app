@@ -88,7 +88,14 @@ object WebFetcher {
             var done = false
             var expanded = false
             var ageClicks = 0
+            var lastCount = -1
+            var stableRounds = 0
             val startAt = System.currentTimeMillis()
+            val targetHost = try {
+                java.net.URI(url).host ?: ""
+            } catch (e: Exception) {
+                ""
+            }
 
             fun finish(html: String?) {
                 if (done) return
@@ -135,7 +142,20 @@ object WebFetcher {
                                     main.postDelayed({ poll() }, 2600)
                                 }
                             } else {
-                                finish(html)
+                                // Cho danh sach ON DINH (so link phim khong
+                                // tang nua) roi moi lay: ban truoc lay qua
+                                // som nen trang chu chi co 8 phim dau tien
+                                val count = lower.split("/phim/").size
+                                if (count == lastCount) stableRounds++
+                                else {
+                                    stableRounds = 0
+                                    lastCount = count
+                                }
+                                if (stableRounds >= 1 || elapsed > 26000) {
+                                    finish(html)
+                                } else {
+                                    main.postDelayed({ poll() }, 2000)
+                                }
                             }
                         }
                         // Van o trang kiem tra: cho tiep (toi da 50 giay)
@@ -158,6 +178,20 @@ object WebFetcher {
                     } else {
                         null
                     }
+                }
+
+                // Khoa khung chinh: khong cho trang bi "cuop" dieu huong
+                // sang trang quang cao (link _blank/popunder cua web -
+                // chinh la ly do tab 18+ bi lac sang trang quang cao
+                // sau lan bam xac nhan tuoi dau tien)
+                override fun shouldOverrideUrlLoading(
+                    view: WebView?,
+                    request: WebResourceRequest?
+                ): Boolean {
+                    if (request?.isForMainFrame != true) return false
+                    val host = request.url?.host ?: return false
+                    if (targetHost.isEmpty()) return false
+                    return host != targetHost && !host.endsWith("cloudflare.com")
                 }
 
                 override fun onPageFinished(view: WebView?, pageUrl: String?) {

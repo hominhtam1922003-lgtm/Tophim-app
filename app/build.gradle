@@ -11,8 +11,8 @@ android {
         applicationId 'com.example.tophimapp'
         minSdk 21
         targetSdk 34
-        versionCode 8
-        versionName '1.4'
+        versionCode 9
+        versionName '1.4.1'
     }
 
     buildTypes {

@@ -46,14 +46,20 @@ class PlayerActivity : AppCompatActivity() {
             })()
         """
 
-        // Do tim luong phat tren trang xem dang chay that: dia chi cua the
-        // <video> + moi tai nguyen .m3u8/.mp4 trang da tai + iframe (neu co)
+        // Do tim luong phat tren trang xem dang chay that: dia chi + THOI
+        // LUONG cua the <video> + moi tai nguyen .m3u8/.mp4 trang da tai
+        // + iframe (neu co). Thoi luong la chìa khoa phan biet phim that
+        // (hang gio) voi quang cao mo dau (chi ~50 giay) - ban 1.4 bat
+        // nham quang cao co bac Hi88 phat cho nguoi dung vi thieu dau nay.
         private const val PROBE_JS = """
             (function(){
-              var out = {src:'', res:[], ifr:''};
+              var out = {src:'', dur:0, res:[], ifr:''};
               try {
                 var v = document.querySelector('video');
-                if (v) out.src = v.currentSrc || v.src || '';
+                if (v) {
+                  out.src = v.currentSrc || v.src || '';
+                  out.dur = (v.duration && isFinite(v.duration)) ? v.duration : 0;
+                }
                 var es = performance.getEntriesByType('resource');
                 for (var i=0;i<es.length;i++){
                   var n = es[i].name || '';
@@ -63,6 +69,20 @@ class PlayerActivity : AppCompatActivity() {
                 if (f) out.ifr = f.src || '';
               } catch(e){}
               return JSON.stringify(out);
+            })()
+        """
+
+        // Bam nut "Bo qua" quang cao trong player cua web (neu co)
+        private const val SKIP_AD_JS = """
+            (function(){
+              var els = document.querySelectorAll('a,button,div,span');
+              for (var i=0;i<els.length;i++){
+                var t = (els[i].textContent||'').trim().toLowerCase();
+                if (t.length < 40 && (t.indexOf('bỏ qua')>=0 || t.indexOf('skip')>=0)){
+                  try{ els[i].click(); return 'clicked'; }catch(e){}
+                }
+              }
+              return 'none';
             })()
         """
 
@@ -375,8 +395,19 @@ class PlayerActivity : AppCompatActivity() {
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         var probeDone = false
         val probeStart = System.currentTimeMillis()
+        // Trang thai do duoc sau moi vong:
+        // - adUrls: cac luong da xac nhan la QUANG CAO (video dang phat
+        //   chung co thoi luong ngan < 180 giay) -> khong bao gio phat
+        // - movieUrl: luong cua the video co thoi luong >= 180 giay
+        // - resHls/resMp4: luong thay trong danh sach tai nguyen
+        val adUrls = HashSet<String>()
+        var movieUrl = ""
+        var resHls = ""
+        var resMp4 = ""
+        var embedUrl = ""
+        var lastSrc = ""
 
-        fun finishProbe(hls: String, mp4: String, embed: String) {
+        fun finishProbe() {
             if (probeDone) return
             probeDone = true
             try {
@@ -385,9 +416,28 @@ class PlayerActivity : AppCompatActivity() {
                 // bo qua
             }
             val list = ArrayList<Candidate>()
-            if (hls.isNotEmpty()) list.add(Candidate(Kind.HLS, hls))
-            if (mp4.isNotEmpty()) list.add(Candidate(Kind.DIRECT, mp4))
-            if (embed.isNotEmpty()) list.add(Candidate(Kind.EMBED, embed))
+            when {
+                movieUrl.isNotEmpty() -> {
+                    if (movieUrl.contains(".m3u8")) {
+                        list.add(Candidate(Kind.HLS, movieUrl))
+                    } else {
+                        list.add(Candidate(Kind.DIRECT, movieUrl))
+                    }
+                }
+                resHls.isNotEmpty() && !adUrls.contains(resHls) ->
+                    list.add(Candidate(Kind.HLS, resHls))
+                lastSrc.isNotEmpty() && !adUrls.contains(lastSrc) -> {
+                    if (lastSrc.contains(".m3u8")) {
+                        list.add(Candidate(Kind.HLS, lastSrc))
+                    } else {
+                        list.add(Candidate(Kind.DIRECT, lastSrc))
+                    }
+                }
+                resMp4.isNotEmpty() && !adUrls.contains(resMp4) ->
+                    list.add(Candidate(Kind.DIRECT, resMp4))
+                embedUrl.isNotEmpty() ->
+                    list.add(Candidate(Kind.EMBED, embedUrl))
+            }
             candidates = list
             if (list.isEmpty()) {
                 showNoSource()
@@ -400,43 +450,53 @@ class PlayerActivity : AppCompatActivity() {
             if (probeDone) return
             probe.evaluateJavascript(PROBE_JS) { result ->
                 if (probeDone) return@evaluateJavascript
-                var hls = ""
-                var mp4 = ""
-                var embed = ""
                 try {
                     val raw = org.json.JSONTokener(result ?: "null")
                         .nextValue()?.toString() ?: ""
                     val o = org.json.JSONObject(raw)
                     val src = o.optString("src")
-                    if (src.startsWith("http")) {
-                        if (src.contains(".m3u8")) hls = src
-                        else if (src.contains(".mp4")) mp4 = src
+                    val dur = o.optDouble("dur", 0.0)
+                    if (src.startsWith("http") &&
+                        (src.contains(".m3u8") || src.contains(".mp4"))
+                    ) {
+                        lastSrc = src
+                        if (dur >= 180) {
+                            movieUrl = src
+                        } else if (dur > 0) {
+                            // Luong ngan dang phat = quang cao mo dau:
+                            // ghi nho de tranh, thu bam nut bo qua QC
+                            adUrls.add(src)
+                            probe.evaluateJavascript(SKIP_AD_JS, null)
+                        }
                     }
                     val res = o.optJSONArray("res")
                     if (res != null) {
                         for (i in 0 until res.length()) {
                             val u = res.optString(i)
-                            if (AdBlock.isAd(u)) continue
-                            if (u.contains(".m3u8") && hls.isEmpty()) hls = u
-                            else if (u.contains(".mp4") && mp4.isEmpty()) mp4 = u
+                            if (AdBlock.isAd(u) || adUrls.contains(u)) continue
+                            if (u.contains(".m3u8") && resHls.isEmpty()) resHls = u
+                            else if (u.contains(".mp4") && resMp4.isEmpty()) resMp4 = u
                         }
                     }
                     val ifr = o.optString("ifr")
                     if (ifr.startsWith("http") &&
                         (ifr.contains("player") || ifr.contains("embed"))
                     ) {
-                        embed = ifr
+                        embedUrl = ifr
                     }
                 } catch (e: Exception) {
                     // Chua doc duoc: thu lai sau
                 }
                 val elapsed = System.currentTimeMillis() - probeStart
                 when {
-                    hls.isNotEmpty() || mp4.isNotEmpty() ->
-                        finishProbe(hls, mp4, embed)
-                    embed.isNotEmpty() && elapsed > 12000 ->
-                        finishProbe("", "", embed)
-                    elapsed > 30000 -> finishProbe("", "", embed)
+                    // Da thay phim that (dai >= 180 giay): phat ngay
+                    movieUrl.isNotEmpty() -> finishProbe()
+                    // Player da tai san playlist phim (khac luong quang
+                    // cao dang phat) va da quan sat du lau: dung luon
+                    resHls.isNotEmpty() && !adUrls.contains(resHls) &&
+                        adUrls.isNotEmpty() && elapsed > 15000 -> finishProbe()
+                    embedUrl.isNotEmpty() && elapsed > 20000 -> finishProbe()
+                    elapsed > 45000 -> finishProbe()
                     else -> handler.postDelayed({ pollProbe() }, 2000)
                 }
             }
@@ -444,7 +504,7 @@ class PlayerActivity : AppCompatActivity() {
 
         probe.loadUrl(watchUrl)
         handler.postDelayed({ pollProbe() }, 2500)
-        handler.postDelayed({ finishProbe("", "", "") }, 35000)
+        handler.postDelayed({ finishProbe() }, 50000)
     }
 
     /** Khong boc duoc nguon sach o moi duong -> bao ro, khong mo trang web. */

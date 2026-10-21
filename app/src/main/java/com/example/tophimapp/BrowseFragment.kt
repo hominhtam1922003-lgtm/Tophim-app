@@ -90,6 +90,13 @@ class BrowseFragment : Fragment() {
         currentPage = 1
         hasMore = false
         if (!swipe.isRefreshing) progress.visibility = View.VISIBLE
+        // Tab 18+: Jsoup khong qua noi cong tuoi (can cookie xac nhan
+        // tuoi) -> di duong WebView TRUOC; neu WebView cung that bai moi
+        // thu Jsoup sau. Cac tab khac giu thu tu Jsoup -> WebView.
+        if (kind == KIND_ADULT) {
+            loadViaWeb(adultFallbackToJsoup = true)
+            return
+        }
         thread {
             RemoteConfig.awaitReady(3500)
             var path: String? = null
@@ -202,12 +209,39 @@ class BrowseFragment : Fragment() {
         updateLoadMoreVisibility()
     }
 
-    private fun loadViaWeb() {
+    private fun loadViaWeb(adultFallbackToJsoup: Boolean = false) {
         val ctx = context ?: return
         // Duong dan ung vien dau tien cua tung loai (khop fetchCategory)
         val paths = TophimSource.categoryPaths(kind)
         fun tryPath(idx: Int) {
             if (idx >= paths.size) {
+                if (adultFallbackToJsoup) {
+                    // WebView that bai toan tap: thu not Jsoup (biet dau
+                    // cookie xac nhan tuoi da co tu phien truoc)
+                    thread {
+                        var path: String? = null
+                        var list: List<Movie> = emptyList()
+                        try {
+                            val r = TophimSource.fetchCategoryPage(kind, 1)
+                            path = r.first
+                            list = r.second
+                        } catch (e: Exception) {
+                            // bo qua
+                        }
+                        activity?.runOnUiThread {
+                            if (list.isNotEmpty()) {
+                                workingPath = path
+                                showFirstPage(list)
+                            } else {
+                                loading = false
+                                swipe.isRefreshing = false
+                                progress.visibility = View.GONE
+                                showVerifyOffer()
+                            }
+                        }
+                    }
+                    return
+                }
                 activity?.runOnUiThread {
                     loading = false
                     swipe.isRefreshing = false
