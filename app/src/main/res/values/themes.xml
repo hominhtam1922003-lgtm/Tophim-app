@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.TruyenReader" parent="Theme.Material3.DayNight">
+        <item name="colorPrimary">#5B4BDB</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">#FF8A00</item>
+    </style>
+</resources>
