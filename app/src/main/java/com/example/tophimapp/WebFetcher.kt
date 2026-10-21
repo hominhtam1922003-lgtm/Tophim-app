@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -11,10 +12,15 @@ import android.webkit.WebViewClient
 import java.io.ByteArrayInputStream
 
 /**
- * Phuong an du phong khi Jsoup bi Cloudflare chan:
- * tai trang bang WebView that, gia lap TRINH DUYET DESKTOP (ban desktop cua
- * web chua san toan bo danh sach chuong trong HTML), tu bam cac nut
- * "Xem them" va cuon het cac hop cuon truoc khi lay HTML da render.
+ * Tai trang bang WebView that (du phong khi Jsoup bi Cloudflare chan).
+ *
+ * tophim.pro bat kiem tra Cloudflare o MOI lan tai trang. Trong WebView:
+ * - Bat cookie (ke ca cookie ben thu ba) de luu "ve thong hanh" cf_clearance,
+ *   cac lan tai sau trong app se qua nhanh hon.
+ * - Khong bo cuoc sau vai giay: cu 2.5 giay lai doc thu HTML; neu van la
+ *   trang kiem tra ("Just a moment"...) thi cho tiep, toi da ~50 giay.
+ *   Khi thay noi dung that (co link /phim/) thi bam "Xem them" + cuon trang
+ *   roi moi lay HTML cuoi.
  * Luon chay tren main thread.
  */
 object WebFetcher {
@@ -22,8 +28,6 @@ object WebFetcher {
     private const val DESKTOP_UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
-    // JS: bam moi phan tu "Xem them / Xem tat ca" + cuon xuong cuoi trang va
-    // cuon het cac hop co thanh cuon rieng (noi chua danh sach chuong)
     private const val EXPAND_JS = """
         (function(){
           var texts = ['xem thêm','xem tất cả','xem toàn bộ','xem hết'];
@@ -33,22 +37,25 @@ object WebFetcher {
             if (texts.indexOf(t) >= 0){ try{ els[i].click(); }catch(e){} }
           }
           window.scrollTo(0, document.body.scrollHeight);
-          var all = document.querySelectorAll('*');
-          for (var j=0;j<all.length;j++){
-            var el = all[j];
-            if (el.scrollHeight > el.clientHeight + 50 && el.clientHeight > 80){
-              el.scrollTop = el.scrollHeight;
-            }
-          }
           return 'done';
         })()
     """
+
+    private val CHALLENGE_MARKERS = listOf(
+        "just a moment", "xác minh bạn là con người", "cf-chl", "attention required",
+        "thực hiện xác minh bảo mật", "checking your browser"
+    )
 
     @SuppressLint("SetJavaScriptEnabled")
     fun fetchHtml(context: Context, url: String, callback: (String?) -> Unit) {
         val main = Handler(Looper.getMainLooper())
         main.post {
-            val webView = WebView(context)
+            // Cookie la dieu kien de Cloudflare cho qua o cac lan tai sau
+            val cm = CookieManager.getInstance()
+            cm.setAcceptCookie(true)
+
+            val webView = WebView(context.applicationContext)
+            cm.setAcceptThirdPartyCookies(webView, true)
             webView.settings.javaScriptEnabled = true
             webView.settings.javaScriptCanOpenWindowsAutomatically = false
             webView.settings.setSupportMultipleWindows(false)
@@ -56,65 +63,81 @@ object WebFetcher {
             webView.settings.useWideViewPort = true
             webView.settings.loadWithOverviewMode = true
             webView.settings.userAgentString = DESKTOP_UA
+
             var done = false
+            var expanded = false
+            val startAt = System.currentTimeMillis()
 
             fun finish(html: String?) {
                 if (done) return
                 done = true
-                try { webView.destroy() } catch (e: Exception) { /* bo qua */ }
+                try {
+                    CookieManager.getInstance().flush()
+                } catch (e: Exception) {
+                    // bo qua
+                }
+                try {
+                    webView.destroy()
+                } catch (e: Exception) {
+                    // bo qua
+                }
                 callback(html)
             }
 
-            webView.webViewClient = object : WebViewClient() {
+            fun poll() {
+                if (done) return
+                val elapsed = System.currentTimeMillis() - startAt
+                webView.evaluateJavascript(
+                    "(function(){return document.documentElement.outerHTML;})()"
+                ) { result ->
+                    if (done) return@evaluateJavascript
+                    val html = decode(result)
+                    val lower = html?.lowercase() ?: ""
+                    val isChallenge = CHALLENGE_MARKERS.any { lower.contains(it) }
+                    val hasContent = html != null && html.contains("/phim/")
+                    when {
+                        // Da qua kiem tra va co noi dung phim
+                        hasContent && !isChallenge -> {
+                            if (!expanded) {
+                                expanded = true
+                                webView.evaluateJavascript(EXPAND_JS) {
+                                    main.postDelayed({ poll() }, 1800)
+                                }
+                            } else {
+                                finish(html)
+                            }
+                        }
+                        // Van o trang kiem tra: cho tiep (toi da 50 giay)
+                        elapsed < 50000 -> main.postDelayed({ poll() }, 2500)
+                        // Het gio: tra HTML hien tai (co the van la trang chan)
+                        else -> finish(html)
+                    }
+                }
+            }
 
-                // CHAN QUANG CAO: moi request toi cac mang quang cao/tracking
-                // deu bi cat ngay trong WebView nay - quang cao cua web
-                // khong bao gio cham duoc vao app
+            webView.webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
                     view: WebView?,
                     request: WebResourceRequest?
                 ): WebResourceResponse? {
-                    val host = request?.url?.host?.lowercase() ?: return null
-                    val blocked = AdBlock.isAd(request?.url?.toString())
-                    return if (blocked) {
-                        WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+                    return if (AdBlock.isAd(request?.url?.toString())) {
+                        WebResourceResponse(
+                            "text/plain", "utf-8", ByteArrayInputStream(ByteArray(0))
+                        )
                     } else {
                         null
                     }
                 }
 
                 override fun onPageFinished(view: WebView?, pageUrl: String?) {
-                    // Cho Cloudflare / JS render xong
-                    main.postDelayed({
-                        if (done) return@postDelayed
-                        view?.evaluateJavascript(EXPAND_JS) {
-                            // Cho noi dung mo rong tai xong roi moi lay HTML
-                            main.postDelayed({
-                                if (!done) {
-                                    view?.evaluateJavascript(
-                                        "(function(){return document.documentElement.outerHTML;})()"
-                                    ) { result -> finish(decode(result)) }
-                                }
-                            }, 2500)
-                        }
-                    }, 3000)
+                    main.postDelayed({ poll() }, 1500)
                 }
             }
-            // Timeout tong 35 giay
-            main.postDelayed({ finish(null) }, 35000)
+            // Phong thu: timeout tong 60 giay
+            main.postDelayed({ finish(null) }, 60000)
             webView.loadUrl(url)
         }
     }
-
-    /** Dau hieu nhan dien ten mien quang cao / tracking pho bien. */
-    private val AD_HOST_MARKERS = listOf(
-        "doubleclick", "googlesyndication", "googleadservices", "adservice",
-        "ads.", ".ads", "ad-", "-ad.", "advertising", "adnxs", "adskeeper",
-        "popads", "popcash", "propellerads", "exoclick", "adsterra", "hilltopads",
-        "mgid", "outbrain", "taboola", "criteo", "pubmatic", "rubiconproject",
-        "smartadserver", "amazon-adsystem", "adform", "openx", "revcontent",
-        "ziddu", "bidvertiser", "trafficjunky", "juicyads", "clickadu", "adcash"
-    )
 
     private fun decode(jsonString: String?): String? {
         if (jsonString == null || jsonString == "null") return null

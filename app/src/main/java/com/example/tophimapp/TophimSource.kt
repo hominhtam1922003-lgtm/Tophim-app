@@ -83,12 +83,15 @@ object TophimSource {
 
     fun fetchHome(): List<Movie> = parseList(fetchDoc("$BASE/"))
 
+    /** Duong dan danh muc (da xac thuc tren web that 22/10/2026). */
+    fun categoryPaths(kind: String): List<String> = when (kind) {
+        "series" -> listOf("/danh-sach/phim-bo", "/phim-bo")
+        "adult" -> listOf("/the-loai/phim-18-1", "/the-loai/phim-18-2")
+        else -> listOf("/danh-sach/phim-le", "/phim-le")
+    }
+
     fun fetchCategory(kind: String): List<Movie> {
-        val paths = if (kind == "series") {
-            listOf("/phim-bo", "/danh-sach/phim-bo", "/the-loai/phim-bo")
-        } else {
-            listOf("/phim-le", "/danh-sach/phim-le", "/the-loai/phim-le")
-        }
+        val paths = categoryPaths(kind)
         for (p in paths) {
             try {
                 val list = parseList(fetchDoc("$BASE$p"))
@@ -248,13 +251,42 @@ object TophimSource {
     private fun epNum(name: String): Double? =
         Regex("""[\d]+(?:\.[\d]+)?""").find(name)?.value?.toDoubleOrNull()
 
-    // ---------------- Trang xem: lay link nhung video ----------------
+    // ---------------- Trang xem: lay link phat video ----------------
 
-    /** Trich URL iframe phat video (playembed.vip/...) tu trang xem tap. */
-    fun extractEmbed(doc: Document): String {
-        val iframes = doc.select("iframe[src]").map { it.absUrl("src") }.filter { it.startsWith("http") }
-        return iframes.firstOrNull { it.contains("playembed", true) }
-            ?: iframes.firstOrNull { it.contains("embed", true) || it.contains("player", true) }
-            ?: iframes.firstOrNull() ?: ""
+    /**
+     * Trich cac nguon phat tu trang xem (xac thuc tren web that 22/10/2026):
+     * - Trang xem KHONG co san <iframe>: link phat nam trong thuoc tinh
+     *   data-embed (may chu playembed.vip/player/{hash}) va data-embedbackup
+     *   (may chu du phong, la file HLS .m3u8 thang tren play.vinahost.id).
+     * - iframe chi duoc tao bang JS sau khi nguoi dung bam nut phat.
+     */
+    fun extractPlayers(doc: Document): PlayerLinks {
+        var hls = ""
+        var embed = ""
+        val backupEl = doc.selectFirst("[data-embedbackup]")
+        if (backupEl != null) {
+            hls = backupEl.attr("data-embedbackup").trim()
+        }
+        val embedEl = doc.selectFirst("[data-embed]")
+        if (embedEl != null) {
+            embed = embedEl.attr("data-embed").trim()
+        }
+        if (hls.isEmpty()) {
+            // Du phong: tim thang link .m3u8 trong HTML
+            val m = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").find(doc.html())
+            if (m != null) hls = m.value
+        }
+        if (embed.isEmpty()) {
+            val iframes = doc.select("iframe[src]").map { it.absUrl("src") }
+                .filter { it.startsWith("http") }
+            embed = iframes.firstOrNull { it.contains("playembed", true) } ?: ""
+        }
+        if (hls.startsWith("//")) hls = "https:$hls"
+        if (embed.startsWith("//")) embed = "https:$embed"
+        // playembed: iframe that cua web co dang /player/{hash}/sub
+        if (embed.contains("playembed") && Regex("""/player/[A-Za-z0-9]+$""").containsMatchIn(embed)) {
+            embed = "$embed/sub"
+        }
+        return PlayerLinks(hls = hls, embed = embed)
     }
 }

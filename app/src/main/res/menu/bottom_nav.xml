@@ -13,6 +13,10 @@
         android:icon="@android:drawable/ic_menu_today"
         android:title="Phim bộ" />
     <item
+        android:id="@+id/nav_adult"
+        android:icon="@android:drawable/ic_menu_myplaces"
+        android:title="18+" />
+    <item
         android:id="@+id/nav_favorites"
         android:icon="@android:drawable/star_big_on"
         android:title="Yêu thích" />

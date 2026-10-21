@@ -27,6 +27,7 @@ class MainActivity : AppCompatActivity() {
                 R.id.nav_home -> show(HomeFragment())
                 R.id.nav_single -> show(BrowseFragment.newInstance(BrowseFragment.KIND_SINGLE))
                 R.id.nav_series -> show(BrowseFragment.newInstance(BrowseFragment.KIND_SERIES))
+                R.id.nav_adult -> show(BrowseFragment.newInstance(BrowseFragment.KIND_ADULT))
                 R.id.nav_favorites -> {
                     // Thong bao tap moi gan voi phim yeu thich:
                     // chua co quyen thi xin lai tai day (Android 13+)

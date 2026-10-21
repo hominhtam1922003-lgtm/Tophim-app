@@ -26,6 +26,12 @@ data class MovieDetail(
     val totalEpisodes: Int get() = servers.maxOfOrNull { it.episodes.size } ?: 0
 }
 
+/** Cac nguon phat trich tu trang xem: HLS thang (.m3u8) va khung nhung playembed. */
+data class PlayerLinks(
+    val hls: String = "",
+    val embed: String = ""
+)
+
 data class MovieHistoryItem(
     val movieUrl: String,
     val title: String,

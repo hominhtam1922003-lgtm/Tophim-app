@@ -24,6 +24,7 @@ class BrowseFragment : Fragment() {
     companion object {
         const val KIND_SINGLE = "single"
         const val KIND_SERIES = "series"
+        const val KIND_ADULT = "adult"
         fun newInstance(kind: String): BrowseFragment {
             val f = BrowseFragment()
             f.arguments = Bundle().apply { putString("kind", kind) }
@@ -93,11 +94,7 @@ class BrowseFragment : Fragment() {
     private fun loadViaWeb() {
         val ctx = context ?: return
         // Duong dan ung vien dau tien cua tung loai (khop fetchCategory)
-        val paths = if (kind == KIND_SERIES) {
-            listOf("/phim-bo", "/danh-sach/phim-bo", "/the-loai/phim-bo")
-        } else {
-            listOf("/phim-le", "/danh-sach/phim-le", "/the-loai/phim-le")
-        }
+        val paths = TophimSource.categoryPaths(kind)
         fun tryPath(idx: Int) {
             if (idx >= paths.size) {
                 activity?.runOnUiThread {
