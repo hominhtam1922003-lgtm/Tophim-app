@@ -1,5 +1,6 @@
 package com.example.tophimapp
 
+import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
@@ -36,6 +37,12 @@ class HomeFragment : Fragment() {
     private lateinit var progress: ProgressBar
     private lateinit var swipe: SwipeRefreshLayout
     private lateinit var etSearch: EditText
+    private lateinit var btnVerify: Button
+    private var verifyAutoOpened = false
+
+    companion object {
+        const val REQ_VERIFY = 77
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -52,6 +59,8 @@ class HomeFragment : Fragment() {
         adapter = MovieGridAdapter(movies) { openDetail(it) }
         rv.adapter = adapter
         v.findViewById<Button>(R.id.btnLoadMore).visibility = View.GONE
+        btnVerify = v.findViewById(R.id.btnVerify)
+        btnVerify.setOnClickListener { openVerify() }
 
         swipe.setOnRefreshListener {
             if (searching) runSearch(etSearch.text.toString().trim(), manual = false)
@@ -149,16 +158,45 @@ class HomeFragment : Fragment() {
                 if (list.isNotEmpty()) {
                     showHomeList(list)
                 } else if (movies.isEmpty()) {
-                    Toast.makeText(
-                        ctx, "Không tải được danh sách phim, kéo xuống để thử lại",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    // Ca 2 duong tai deu that bai -> gan nhu chac chan web
+                    // dang bat o tick xac minh Cloudflare: moi xac minh thu cong
+                    showVerifyOffer()
                 }
             }
         }
     }
 
+    /** Hien nut xac minh + tu mo man hinh xac minh 1 lan trong phien nay. */
+    private fun showVerifyOffer() {
+        if (::btnVerify.isInitialized) btnVerify.visibility = View.VISIBLE
+        if (!verifyAutoOpened) {
+            verifyAutoOpened = true
+            Toast.makeText(
+                requireContext(),
+                "Web yêu cầu tick xác minh 1 lần, mình mở sẵn trang xác minh cho bạn",
+                Toast.LENGTH_LONG
+            ).show()
+            openVerify()
+        }
+    }
+
+    private fun openVerify() {
+        startActivityForResult(
+            Intent(requireContext(), VerifyActivity::class.java), REQ_VERIFY
+        )
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_VERIFY && resultCode == Activity.RESULT_OK) {
+            if (::btnVerify.isInitialized) btnVerify.visibility = View.GONE
+            searching = false
+            loadHome()
+        }
+    }
+
     private fun showHomeList(list: List<Movie>) {
+        if (::btnVerify.isInitialized) btnVerify.visibility = View.GONE
         homeBackup.clear()
         homeBackup.addAll(list)
         if (!searching) {

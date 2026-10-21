@@ -18,6 +18,9 @@
             android:exported="false"
             android:screenOrientation="landscape" />
         <activity
+            android:name=".VerifyActivity"
+            android:exported="false" />
+        <activity
             android:name=".DetailActivity"
             android:exported="false" />
         <activity

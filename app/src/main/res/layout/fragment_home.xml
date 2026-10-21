@@ -33,6 +33,13 @@
     </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
     <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnVerify"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Web đang bắt xác minh — bấm để xác minh 1 lần"
+        android:visibility="gone" />
+
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/btnLoadMore"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

@@ -48,12 +48,36 @@ object TophimSource {
     fun slugOf(detailUrl: String): String =
         detailUrl.substringAfter("/phim/").substringBefore("?").trimEnd('/')
 
+    /**
+     * Cookie "thong hanh" Cloudflare (cf_clearance) ma WebView cua app da
+     * nhan duoc sau khi nguoi dung tu xac minh 1 lan trong VerifyActivity.
+     * Gan vao request Jsoup (kem dung User-Agent da xac minh) thi tai sieu
+     * nhanh va khong bi chan. Chua xac minh -> tra ve map rong.
+     */
+    fun cfCookies(): Map<String, String> {
+        return try {
+            val raw = android.webkit.CookieManager.getInstance().getCookie(BASE)
+                ?: return emptyMap()
+            raw.split(";").mapNotNull { part ->
+                val i = part.indexOf('=')
+                if (i > 0) {
+                    part.substring(0, i).trim() to part.substring(i + 1).trim()
+                } else {
+                    null
+                }
+            }.toMap()
+        } catch (e: Exception) {
+            emptyMap()
+        }
+    }
+
     fun fetchDoc(rawUrl: String): Document {
         val url = rebase(rawUrl)
         val doc = Jsoup.connect(url)
             .userAgent(UA)
             .header("Accept-Language", "vi-VN,vi;q=0.9,en;q=0.8")
             .header("Referer", "$BASE/")
+            .cookies(cfCookies())
             .timeout(30000)
             .followRedirects(true)
             .get()

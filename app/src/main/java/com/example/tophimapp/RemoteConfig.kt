@@ -108,6 +108,7 @@ object RemoteConfig {
             val doc = org.jsoup.Jsoup.connect("$base/")
                 .userAgent(UA)
                 .header("Accept-Language", "vi-VN,vi;q=0.9")
+                .cookies(TophimSource.cfCookies())
                 .timeout(8000)
                 .followRedirects(true)
                 .get()

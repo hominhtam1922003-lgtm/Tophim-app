@@ -1,5 +1,6 @@
 package com.example.tophimapp
 
+import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -35,8 +36,10 @@ class BrowseFragment : Fragment() {
     private lateinit var adapter: MovieGridAdapter
     private lateinit var swipe: SwipeRefreshLayout
     private lateinit var progress: android.widget.ProgressBar
+    private lateinit var btnVerify: com.google.android.material.button.MaterialButton
     private var kind: String = KIND_SERIES
     private var loading = false
+    private var verifyAutoOpened = false
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -53,6 +56,8 @@ class BrowseFragment : Fragment() {
         adapter = MovieGridAdapter(emptyList()) { openDetail(it) }
         rv.adapter = adapter
         v.findViewById<MaterialButton>(R.id.btnLoadMore).visibility = View.GONE
+        btnVerify = v.findViewById(R.id.btnVerify)
+        btnVerify.setOnClickListener { openVerify() }
         swipe.setOnRefreshListener { load() }
         load()
         return v
@@ -101,7 +106,7 @@ class BrowseFragment : Fragment() {
                     loading = false
                     swipe.isRefreshing = false
                     progress.visibility = View.GONE
-                    Toast.makeText(ctx, "Không tải được danh sách, kéo xuống thử lại", Toast.LENGTH_LONG).show()
+                    showVerifyOffer()
                 }
                 return
             }
@@ -117,6 +122,7 @@ class BrowseFragment : Fragment() {
                 }
                 if (list.isNotEmpty()) {
                     activity?.runOnUiThread {
+                        if (::btnVerify.isInitialized) btnVerify.visibility = View.GONE
                         adapter.submit(list)
                         loading = false
                         swipe.isRefreshing = false
@@ -128,5 +134,33 @@ class BrowseFragment : Fragment() {
             }
         }
         tryPath(0)
+    }
+
+    /** Tai that bai o moi duong -> kha nang cao la o tick xac minh Cloudflare. */
+    private fun showVerifyOffer() {
+        if (::btnVerify.isInitialized) btnVerify.visibility = View.VISIBLE
+        if (!verifyAutoOpened) {
+            verifyAutoOpened = true
+            Toast.makeText(
+                requireContext(),
+                "Web yêu cầu tick xác minh 1 lần, mình mở sẵn trang xác minh cho bạn",
+                Toast.LENGTH_LONG
+            ).show()
+            openVerify()
+        }
+    }
+
+    private fun openVerify() {
+        startActivityForResult(
+            Intent(requireContext(), VerifyActivity::class.java), HomeFragment.REQ_VERIFY
+        )
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == HomeFragment.REQ_VERIFY && resultCode == Activity.RESULT_OK) {
+            if (::btnVerify.isInitialized) btnVerify.visibility = View.GONE
+            load()
+        }
     }
 }

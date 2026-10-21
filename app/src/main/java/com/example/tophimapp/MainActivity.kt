@@ -24,6 +24,9 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        // App da co toolbar rieng trong layout; tat action bar mac dinh
+        // de khoi bi 2 thanh tieu de chong nhau
+        supportActionBar?.hide()
 
         val tabHome = findViewById<TextView>(R.id.tabHome)
         val tabSingle = findViewById<TextView>(R.id.tabSingle)
