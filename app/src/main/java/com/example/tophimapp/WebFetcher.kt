@@ -34,8 +34,31 @@ object WebFetcher {
             var t = (els[i].textContent||'').trim().toLowerCase();
             if (texts.indexOf(t) >= 0){ try{ els[i].click(); }catch(e){} }
           }
-          window.scrollTo(0, document.body.scrollHeight);
+          // Cuon tung doan xuong day trang de cac hang phim tai cham
+          // (lazy render khi thay trong tam nhin) kip hien ra het
+          var y = 0;
+          var iv = setInterval(function(){
+            y += 900;
+            window.scrollTo(0, y);
+            if (y >= document.body.scrollHeight){ clearInterval(iv); window.scrollTo(0, 0); }
+          }, 130);
           return 'done';
+        })()
+    """
+
+    // Trang /phim-18 co modal xac nhan tuoi phu len luoi phim: phai bam
+    // nut "Toi da tren 18 tuoi" (web con co chen quang cao popunder vao
+    // lan bam dau - da bi chan popup nen thuong phai bam 2 lan)
+    private const val AGE_GATE_JS = """
+        (function(){
+          var els = document.querySelectorAll('a,button,div,span');
+          for (var i=0;i<els.length;i++){
+            var t = (els[i].textContent||'').trim().toLowerCase();
+            if (t.indexOf('trên 18 tuổi') >= 0 && t.length < 60){
+              try{ els[i].click(); return 'clicked'; }catch(e){}
+            }
+          }
+          return 'none';
         })()
     """
 
@@ -64,6 +87,7 @@ object WebFetcher {
 
             var done = false
             var expanded = false
+            var ageClicks = 0
             val startAt = System.currentTimeMillis()
 
             fun finish(html: String?) {
@@ -93,13 +117,22 @@ object WebFetcher {
                     val lower = html?.lowercase() ?: ""
                     val isChallenge = CHALLENGE_MARKERS.any { lower.contains(it) }
                     val hasContent = html != null && html.contains("/phim/")
+                    val ageGated = lower.contains("giới hạn độ tuổi") ||
+                        lower.contains("tôi đã trên 18")
                     when {
+                        // Trang bi cong tuoi (18+): bam nut xac nhan truoc
+                        hasContent && !isChallenge && ageGated && ageClicks < 3 -> {
+                            ageClicks++
+                            webView.evaluateJavascript(AGE_GATE_JS) {
+                                main.postDelayed({ poll() }, 2000)
+                            }
+                        }
                         // Da qua kiem tra va co noi dung phim
                         hasContent && !isChallenge -> {
                             if (!expanded) {
                                 expanded = true
                                 webView.evaluateJavascript(EXPAND_JS) {
-                                    main.postDelayed({ poll() }, 1800)
+                                    main.postDelayed({ poll() }, 2600)
                                 }
                             } else {
                                 finish(html)

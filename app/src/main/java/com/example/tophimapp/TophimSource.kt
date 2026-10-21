@@ -129,17 +129,26 @@ object TophimSource {
         else -> listOf("/phim-le", "/danh-sach/phim-le")
     }
 
-    fun fetchCategory(kind: String): List<Movie> {
-        val paths = categoryPaths(kind)
-        for (p in paths) {
+    fun fetchCategory(kind: String): List<Movie> = fetchCategoryPage(kind, 1).second
+
+    /**
+     * Tai 1 trang cua danh muc; tra ve (duong dan dung duoc, danh sach).
+     * Phan trang cua web la ?page=N (xac thuc 22/10/2026: /phim-bo co
+     * 16 phim/trang, /phim-18 co 24 phim/trang).
+     * TUYET DOI khong duoc "lay tam trang chu" khi that bai nhu truoc:
+     * chinh dong du phong do lam tab 18+ hien y het trang chu.
+     */
+    fun fetchCategoryPage(kind: String, page: Int): Pair<String?, List<Movie>> {
+        for (p in categoryPaths(kind)) {
             try {
-                val list = parseList(fetchDoc("$BASE$p"))
-                if (list.isNotEmpty()) return list
+                val url = if (page <= 1) "$BASE$p" else "$BASE$p?page=$page"
+                val list = parseList(fetchDoc(url))
+                if (list.isNotEmpty()) return p to list
             } catch (e: Exception) {
                 // Thu duong dan tiep theo
             }
         }
-        return fetchHome()
+        return null to emptyList()
     }
 
     fun searchUrl(keyword: String): String =
