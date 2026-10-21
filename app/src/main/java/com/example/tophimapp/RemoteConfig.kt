@@ -22,8 +22,6 @@ object RemoteConfig {
         "https://raw.githubusercontent.com/hominhtam1922003-lgtm/Tophim-app/main/config.json"
     private const val PREFS = "remote_config"
     private const val KEY_LAST_GOOD = "last_good_base"
-    private const val UA =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
     private val latch = CountDownLatch(1)
     @Volatile private var started = false
@@ -88,7 +86,7 @@ object RemoteConfig {
             conn = (URL(CONFIG_URL).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 6000
                 readTimeout = 6000
-                setRequestProperty("User-Agent", UA)
+                setRequestProperty("User-Agent", TophimSource.UA)
             }
             if (conn.responseCode != 200) null
             else JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
@@ -106,7 +104,7 @@ object RemoteConfig {
     private fun probe(base: String): String? {
         return try {
             val doc = org.jsoup.Jsoup.connect("$base/")
-                .userAgent(UA)
+                .userAgent(TophimSource.UA)
                 .header("Accept-Language", "vi-VN,vi;q=0.9")
                 .cookies(TophimSource.cfCookies())
                 .timeout(8000)

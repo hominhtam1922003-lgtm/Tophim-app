@@ -8,7 +8,7 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Trang web yêu cầu xác minh bạn là người thật (Cloudflare). Hãy tick vào ô xác minh trên trang, chờ trang phim hiện ra — app sẽ tự quay lại và tải tiếp. Vé xác minh được lưu lại, lâu lâu mới phải làm lại 1 lần."
+        android:text="Trang web đang kiểm tra bạn là người thật (Cloudflare). Thường nó TỰ kiểm tra xong sau vài giây — cứ chờ trang phim hiện ra, app sẽ tự quay lại và tải tiếp. Nếu hiện ô tick &quot;Tôi là con người&quot; thì tick vào. Nếu quay quá 1 phút vẫn không xong, bấm nút Tải lại trang ở dưới."
         android:textSize="14sp" />
 
     <WebView
@@ -17,6 +17,13 @@
         android:layout_height="0dp"
         android:layout_marginTop="10dp"
         android:layout_weight="1" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnVerifyReload"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="Tải lại trang xác minh" />
 
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btnVerifyDone"

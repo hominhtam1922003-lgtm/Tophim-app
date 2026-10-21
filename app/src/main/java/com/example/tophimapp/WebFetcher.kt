@@ -25,8 +25,6 @@ import java.io.ByteArrayInputStream
  */
 object WebFetcher {
 
-    private const val DESKTOP_UA =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
     private const val EXPAND_JS = """
         (function(){
@@ -62,7 +60,7 @@ object WebFetcher {
             webView.settings.domStorageEnabled = true
             webView.settings.useWideViewPort = true
             webView.settings.loadWithOverviewMode = true
-            webView.settings.userAgentString = DESKTOP_UA
+            webView.settings.userAgentString = TophimSource.UA
 
             var done = false
             var expanded = false

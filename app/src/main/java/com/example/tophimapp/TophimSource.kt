@@ -35,8 +35,19 @@ object TophimSource {
         return if (host == activeBase) url else activeBase + url.substring(host.length)
     }
 
-    private const val UA =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    private const val FALLBACK_UA =
+        "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.71 Mobile Safari/537.36"
+
+    /**
+     * User-Agent dung chung cho CA app (Jsoup, WebView, xac minh, player).
+     * MainActivity ghi de bang UA THAT cua may (WebSettings
+     * .getDefaultUserAgent) ngay khi app mo, de dau van tay nhat quan
+     * nhu Chrome that. Ban <=1.2.1 khai UA Windows tren dien thoai
+     * Android -> Cloudflare doi chieu thay mau thuan nen man hinh
+     * xac minh quay vong lap mai khong qua duoc.
+     */
+    @Volatile
+    var UA: String = FALLBACK_UA
 
     class BlockedException : Exception("Cloudflare blocked")
 

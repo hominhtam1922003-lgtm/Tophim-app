@@ -25,8 +25,6 @@ import java.io.ByteArrayInputStream
 class VerifyActivity : AppCompatActivity() {
 
     companion object {
-        private const val DESKTOP_UA =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
         private val CHALLENGE_MARKERS = listOf(
             "just a moment", "xác minh bạn là con người", "cf-chl",
@@ -64,7 +62,7 @@ class VerifyActivity : AppCompatActivity() {
             domStorageEnabled = true
             useWideViewPort = true
             loadWithOverviewMode = true
-            userAgentString = DESKTOP_UA
+            userAgentString = TophimSource.UA
         }
         webView.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(
@@ -98,8 +96,16 @@ class VerifyActivity : AppCompatActivity() {
         }
 
         findViewById<Button>(R.id.btnVerifyDone).setOnClickListener { done() }
+        findViewById<Button>(R.id.btnVerifyReload).setOnClickListener {
+            webView.reload()
+        }
         webView.loadUrl(TophimSource.BASE + "/")
         handler.postDelayed(poll, 3000)
+        // Neu man hinh kiem tra quay qua 30 giay, tu tai lai 1 lan
+        // (kiem tra quan ly cua Cloudflare doi khi can tai lai moi qua)
+        handler.postDelayed({
+            if (!finished) webView.reload()
+        }, 30000)
     }
 
     /** Trang phim that da hien (co link /phim/ va khong con dau hieu chan)? */

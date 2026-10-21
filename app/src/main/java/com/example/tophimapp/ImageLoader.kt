@@ -15,15 +15,13 @@ import com.bumptech.glide.request.target.Target
  */
 object ImageLoader {
 
-    private const val BROWSER_UA =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
     private fun glideUrl(raw: String): GlideUrl {
         return GlideUrl(
             raw,
             LazyHeaders.Builder()
                 .addHeader("Referer", TophimSource.BASE + "/")
-                .addHeader("User-Agent", BROWSER_UA)
+                .addHeader("User-Agent", TophimSource.UA)
                 .addHeader("Accept", "image/avif,image/webp,image/*,*/*;q=0.8")
                 .build()
         )

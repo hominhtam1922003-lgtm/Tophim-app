@@ -23,6 +23,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Dung UA THAT cua may cho moi request: dau van tay nhat quan
+        // nhu Chrome that thi Cloudflare moi cho qua man hinh xac minh
+        try {
+            val realUa = android.webkit.WebSettings.getDefaultUserAgent(applicationContext)
+            if (!realUa.isNullOrBlank()) TophimSource.UA = realUa
+        } catch (e: Exception) {
+            // Giu UA du phong trong TophimSource
+        }
         setContentView(R.layout.activity_main)
         // App da co toolbar rieng trong layout; tat action bar mac dinh
         // de khoi bi 2 thanh tieu de chong nhau

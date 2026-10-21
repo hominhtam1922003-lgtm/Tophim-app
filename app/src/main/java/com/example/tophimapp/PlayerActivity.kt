@@ -37,8 +37,6 @@ class PlayerActivity : AppCompatActivity() {
         const val EXTRA_TITLE = "movie_title"
         const val EXTRA_EPISODE = "episode_name"
 
-        private const val DESKTOP_UA =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
         // Xoa lien ket target=_blank (nhe - dung cho trang xem goc)
         private const val CLEAN_LINKS_JS = """
@@ -112,7 +110,7 @@ class PlayerActivity : AppCompatActivity() {
             mediaPlaybackRequiresUserGesture = false
             setSupportMultipleWindows(false)
             javaScriptCanOpenWindowsAutomatically = false
-            userAgentString = DESKTOP_UA
+            userAgentString = TophimSource.UA
             loadWithOverviewMode = true
             useWideViewPort = true
         }

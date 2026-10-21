@@ -18,6 +18,12 @@ import androidx.work.WorkerParameters
 class NewEpisodeWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
 
     override fun doWork(): Result {
+        try {
+            val realUa = android.webkit.WebSettings.getDefaultUserAgent(applicationContext)
+            if (!realUa.isNullOrBlank()) TophimSource.UA = realUa
+        } catch (e: Exception) {
+            // Giu UA du phong
+        }
         RemoteConfig.resolveBlocking(applicationContext)
         val db = DbRepo(applicationContext)
         for ((movie, knownCount) in db.favorites()) {
