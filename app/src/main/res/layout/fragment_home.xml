@@ -39,6 +39,15 @@
         android:text="Web đang bắt xác minh — bấm để xác minh 1 lần"
         android:visibility="gone" />
 
+    <TextView
+        android:id="@+id/tvLoadError"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:textColor="#FF8A80"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btnLoadMore"
         android:layout_width="match_parent"

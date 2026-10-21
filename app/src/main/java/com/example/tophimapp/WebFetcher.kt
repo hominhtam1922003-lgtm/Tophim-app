@@ -18,7 +18,7 @@ import java.io.ByteArrayInputStream
  * - Bat cookie (ke ca cookie ben thu ba) de luu "ve thong hanh" cf_clearance,
  *   cac lan tai sau trong app se qua nhanh hon.
  * - Khong bo cuoc sau vai giay: cu 2.5 giay lai doc thu HTML; neu van la
- *   trang kiem tra ("Just a moment"...) thi cho tiep, toi da ~50 giay.
+ *   trang kiem tra ("Just a moment"...) thi cho tiep, toi da ~30 giay.
  *   Khi thay noi dung that (co link /phim/) thi bam "Xem them" + cuon trang
  *   roi moi lay HTML cuoi.
  * Luon chay tren main thread.
@@ -108,7 +108,7 @@ object WebFetcher {
                             }
                         }
                         // Van o trang kiem tra: cho tiep (toi da 50 giay)
-                        elapsed < 50000 -> main.postDelayed({ poll() }, 2500)
+                        elapsed < 30000 -> main.postDelayed({ poll() }, 2500)
                         // Het gio: tra HTML hien tai (co the van la trang chan)
                         else -> finish(html)
                     }
@@ -134,7 +134,7 @@ object WebFetcher {
                 }
             }
             // Phong thu: timeout tong 60 giay
-            main.postDelayed({ finish(null) }, 60000)
+            main.postDelayed({ finish(null) }, 40000)
             webView.loadUrl(url)
         }
     }

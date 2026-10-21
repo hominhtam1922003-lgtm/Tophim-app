@@ -78,7 +78,7 @@ object TophimSource {
             .header("Accept-Language", "vi-VN,vi;q=0.9,en;q=0.8")
             .header("Referer", "$BASE/")
             .cookies(cfCookies())
-            .timeout(30000)
+            .timeout(12000)
             .followRedirects(true)
             .get()
         val text = doc.text()

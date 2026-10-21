@@ -38,6 +38,7 @@ class HomeFragment : Fragment() {
     private lateinit var swipe: SwipeRefreshLayout
     private lateinit var etSearch: EditText
     private lateinit var btnVerify: Button
+    private lateinit var tvLoadError: android.widget.TextView
     private var verifyAutoOpened = false
 
     companion object {
@@ -61,6 +62,7 @@ class HomeFragment : Fragment() {
         v.findViewById<Button>(R.id.btnLoadMore).visibility = View.GONE
         btnVerify = v.findViewById(R.id.btnVerify)
         btnVerify.setOnClickListener { openVerify() }
+        tvLoadError = v.findViewById(R.id.tvLoadError)
 
         swipe.setOnRefreshListener {
             if (searching) runSearch(etSearch.text.toString().trim(), manual = false)
@@ -113,33 +115,46 @@ class HomeFragment : Fragment() {
         startActivity(i)
     }
 
+    /**
+     * Tai trang chu bang 2 duong SONG SONG (Jsoup + WebView), duong nao ra
+     * ket qua truoc thi dung duong do. Cach cu (Jsoup xong moi toi WebView)
+     * khien nguoi dung phai cho toi ~90 giay toan vong xoay khi bi chan.
+     */
     private fun loadHome() {
         if (loading) return
         loading = true
         if (!swipe.isRefreshing) progress.visibility = View.VISIBLE
+        val ctx = context ?: run { loading = false; return }
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun settle(list: List<Movie>) {
+            activity?.runOnUiThread {
+                if (!settled.compareAndSet(false, true)) return@runOnUiThread
+                loading = false
+                swipe.isRefreshing = false
+                progress.visibility = View.GONE
+                if (list.isNotEmpty()) {
+                    setLoadError(false)
+                    showHomeList(list)
+                } else if (movies.isEmpty()) {
+                    // Ca 2 duong tai deu that bai -> gan nhu chac chan web
+                    // dang bat o tick xac minh Cloudflare: moi xac minh thu cong
+                    setLoadError(true)
+                    showVerifyOffer()
+                }
+            }
+        }
+
         thread {
             RemoteConfig.awaitReady(3500)
             var list: List<Movie> = emptyList()
             try {
                 list = TophimSource.fetchHome()
             } catch (e: Exception) {
-                // Bi Cloudflare chan hoac loi mang -> thu WebView o buoc duoi
+                // Bi chan: de duong WebView phan dinh
             }
-            activity?.runOnUiThread {
-                if (list.isNotEmpty()) {
-                    showHomeList(list)
-                    loading = false
-                    swipe.isRefreshing = false
-                    progress.visibility = View.GONE
-                } else {
-                    loadHomeViaWeb()
-                }
-            }
+            if (list.isNotEmpty()) settle(list)
         }
-    }
-
-    private fun loadHomeViaWeb() {
-        val ctx = context ?: return
         WebFetcher.fetchHtml(ctx, TophimSource.BASE + "/") { html ->
             var list: List<Movie> = emptyList()
             if (html != null) {
@@ -151,18 +166,21 @@ class HomeFragment : Fragment() {
                     // bo qua
                 }
             }
-            activity?.runOnUiThread {
-                loading = false
-                swipe.isRefreshing = false
-                progress.visibility = View.GONE
-                if (list.isNotEmpty()) {
-                    showHomeList(list)
-                } else if (movies.isEmpty()) {
-                    // Ca 2 duong tai deu that bai -> gan nhu chac chan web
-                    // dang bat o tick xac minh Cloudflare: moi xac minh thu cong
-                    showVerifyOffer()
-                }
-            }
+            settle(list)
+        }
+        // Phong thu: 45 giay ma chua duong nao xong -> coi nhu that bai
+        Handler(Looper.getMainLooper()).postDelayed({ settle(emptyList()) }, 45000)
+    }
+
+    private fun setLoadError(show: Boolean) {
+        if (!::tvLoadError.isInitialized) return
+        tvLoadError.visibility = if (show) View.VISIBLE else View.GONE
+        if (show) {
+            tvLoadError.text =
+                "Chưa tải được phim: trang web đang chặn app bằng màn hình xác minh " +
+                    "Cloudflare. Hãy bấm nút xác minh phía trên, tick vào ô " +
+                    "\"Tôi là con người\", chờ trang phim hiện ra rồi quay lại. " +
+                    "Nếu đã xác minh mà vẫn không tải được, chụp màn hình này gửi lại nhé."
         }
     }
 
