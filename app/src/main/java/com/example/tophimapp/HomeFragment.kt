@@ -116,20 +116,31 @@ class HomeFragment : Fragment() {
     }
 
     /**
-     * Tai trang chu bang 2 duong SONG SONG (Jsoup + WebView), duong nao ra
-     * ket qua truoc thi dung duong do. Cach cu (Jsoup xong moi toi WebView)
-     * khien nguoi dung phai cho toi ~90 giay toan vong xoay khi bi chan.
+     * Tai trang chu bang 2 duong SONG SONG (Jsoup + WebView) nhung CHOT
+     * bang danh sach GIAU hon - khong con "duong nao ve truoc thang":
+     * HTML tho cua Jsoup chi chua ~8 phim dau + anh bia dang lazy (thieu
+     * ca phim lan bia), trong khi ban WebView render day du ~90 phim.
+     * Ban 1.4.1 thua o cho nay: sau khi xem phim, cookie da thong quan
+     * nen Jsoup ve nhanh va thang dua -> trang chu rot con 8 phim mat
+     * bia va "dinh" luon. Quy tac moi:
+     * - Jsoup ve >= 20 phim: hien tam, WebView ve sau giau hon thi nang cap.
+     * - Jsoup ve < 20 phim: khong dung, cho WebView.
+     * - Ca 2 da ve: chon danh sach nhieu phim hon (hoa thi lay WebView).
      */
     private fun loadHome() {
         if (loading) return
         loading = true
         if (!swipe.isRefreshing) progress.visibility = View.VISIBLE
         val ctx = context ?: run { loading = false; return }
-        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+        var jsoupList: List<Movie>? = null
+        var webList: List<Movie>? = null
+        var finalized = false
+        var tentativeShown = 0
 
-        fun settle(list: List<Movie>) {
+        fun finishWith(list: List<Movie>) {
             activity?.runOnUiThread {
-                if (!settled.compareAndSet(false, true)) return@runOnUiThread
+                if (finalized) return@runOnUiThread
+                finalized = true
                 loading = false
                 swipe.isRefreshing = false
                 progress.visibility = View.GONE
@@ -153,7 +164,20 @@ class HomeFragment : Fragment() {
             } catch (e: Exception) {
                 // Bi chan: de duong WebView phan dinh
             }
-            if (list.isNotEmpty()) settle(list)
+            synchronized(this) { jsoupList = list }
+            val web = synchronized(this) { webList }
+            when {
+                web != null -> finishWith(if (web.size >= list.size) web else list)
+                list.size >= 20 -> activity?.runOnUiThread {
+                    // Hien tam ban Jsoup day du; WebView ve sau se nang cap
+                    if (!finalized && !searching) {
+                        tentativeShown = list.size
+                        setLoadError(false)
+                        showHomeList(list)
+                    }
+                }
+                // Jsoup ngheo: im lang cho duong WebView
+            }
         }
         WebFetcher.fetchHtml(ctx, TophimSource.BASE + "/") { html ->
             var list: List<Movie> = emptyList()
@@ -166,10 +190,38 @@ class HomeFragment : Fragment() {
                     // bo qua
                 }
             }
-            settle(list)
+            synchronized(this) { webList = list }
+            val soup = synchronized(this) { jsoupList }
+            when {
+                soup != null -> finishWith(if (list.size >= soup.size) list else soup)
+                list.isNotEmpty() -> finishWith(list)
+                // Jsoup chua ve ma WebView trong: cho not Jsoup/watchdog
+            }
         }
-        // Phong thu: 45 giay ma chua duong nao xong -> coi nhu that bai
-        Handler(Looper.getMainLooper()).postDelayed({ settle(emptyList()) }, 45000)
+        // Phong thu 30 giay: chot bang ket qua tot nhat dang co
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (finalized) return@postDelayed
+            val soup = synchronized(this) { jsoupList }
+            val web = synchronized(this) { webList }
+            val best = when {
+                soup != null && web != null -> if (web.size >= soup.size) web else soup
+                web != null -> web
+                soup != null -> soup
+                else -> emptyList()
+            }
+            if (tentativeShown > 0 && best.size <= tentativeShown) {
+                activity?.runOnUiThread {
+                    if (!finalized) {
+                        finalized = true
+                        loading = false
+                        swipe.isRefreshing = false
+                        progress.visibility = View.GONE
+                    }
+                }
+            } else {
+                finishWith(best)
+            }
+        }, 30000)
     }
 
     private fun setLoadError(show: Boolean) {

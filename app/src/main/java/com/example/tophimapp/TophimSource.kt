@@ -130,6 +130,18 @@ object TophimSource {
             if (first.startsWith("//")) return "https:$first"
             if (first.startsWith("/")) return BASE + first
         }
+        // Markup kieu <picture><source srcset="..."><img src="placeholder">:
+        // link that nam o the source anh em/cha, khong nam tren the img
+        val picture = img.parents().firstOrNull { it.tagName() == "picture" }
+        val source = picture?.selectFirst("source[srcset], source[data-srcset]")
+        if (source != null) {
+            val ss = source.attr("srcset").ifBlank { source.attr("data-srcset") }
+            val first = ss.split(",").firstOrNull()?.trim()
+                ?.split(" ")?.firstOrNull() ?: ""
+            if (first.startsWith("http")) return first
+            if (first.startsWith("//")) return "https:$first"
+            if (first.startsWith("/")) return BASE + first
+        }
         return img.absUrl("src")
     }
 

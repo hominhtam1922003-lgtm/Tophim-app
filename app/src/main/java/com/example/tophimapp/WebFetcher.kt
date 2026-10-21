@@ -48,17 +48,43 @@ object WebFetcher {
 
     // Trang /phim-18 co modal xac nhan tuoi phu len luoi phim: phai bam
     // nut "Toi da tren 18 tuoi" (web con co chen quang cao popunder vao
-    // lan bam dau - da bi chan popup nen thuong phai bam 2 lan)
+    // lan bam dau - da bi chan popup nen thuong phai bam 2 lan).
+    // BAN 1.4.2: chon phan tu co chu NGAN NHAT chua cum tu - ban cu lay
+    // phan tu khop DAU TIEN theo thu tu tai lieu, ma phan tu cha (div
+    // bao quanh modal) luon dung truoc nut that -> bam mai vao khung
+    // rong, cong tuoi khong bao gio mo.
     private const val AGE_GATE_JS = """
         (function(){
           var els = document.querySelectorAll('a,button,div,span');
+          var best = null, bestLen = 100000;
           for (var i=0;i<els.length;i++){
             var t = (els[i].textContent||'').trim().toLowerCase();
-            if (t.indexOf('trên 18 tuổi') >= 0 && t.length < 60){
-              try{ els[i].click(); return 'clicked'; }catch(e){}
+            if (t.indexOf('trên 18 tuổi') >= 0 && t.length < 80 && t.length < bestLen){
+              best = els[i]; bestLen = t.length;
             }
           }
+          if (best){ try{ best.click(); return 'clicked'; }catch(e){} }
           return 'none';
+        })()
+    """
+
+    // Mot lan doc trang lay ca 2 thu: HTML cua trang + cong tuoi con
+    // DANG HIEN hay da tat (modal tat roi nhung van con trong DOM an
+    // thi text van con - phai nhin tinh trang hien that cua no)
+    private const val STATE_JS = """
+        (function(){
+          var gate = 'gone';
+          var els = document.querySelectorAll('div,section,form,aside');
+          for (var i=0;i<els.length;i++){
+            var t = (els[i].textContent||'').toLowerCase();
+            if (t.indexOf('giới hạn độ tuổi') >= 0 || t.indexOf('cảnh báo nội dung') >= 0){
+              var st = window.getComputedStyle(els[i]);
+              var r = els[i].getBoundingClientRect();
+              if (st.display !== 'none' && st.visibility !== 'hidden' &&
+                  r.width > 150 && r.height > 80){ gate = 'visible'; break; }
+            }
+          }
+          return JSON.stringify({gate: gate, html: document.documentElement.outerHTML});
         })()
     """
 
@@ -116,19 +142,26 @@ object WebFetcher {
             fun poll() {
                 if (done) return
                 val elapsed = System.currentTimeMillis() - startAt
-                webView.evaluateJavascript(
-                    "(function(){return document.documentElement.outerHTML;})()"
-                ) { result ->
+                webView.evaluateJavascript(STATE_JS) { result ->
                     if (done) return@evaluateJavascript
-                    val html = decode(result)
+                    var html: String? = null
+                    var gateVisible = false
+                    try {
+                        val raw = org.json.JSONTokener(result ?: "null")
+                            .nextValue()?.toString() ?: ""
+                        val o = org.json.JSONObject(raw)
+                        html = o.optString("html").ifEmpty { null }
+                        gateVisible = o.optString("gate") == "visible"
+                    } catch (e: Exception) {
+                        // Chua doc duoc trang thai: thu lai vong sau
+                    }
                     val lower = html?.lowercase() ?: ""
                     val isChallenge = CHALLENGE_MARKERS.any { lower.contains(it) }
                     val hasContent = html != null && html.contains("/phim/")
-                    val ageGated = lower.contains("giới hạn độ tuổi") ||
-                        lower.contains("tôi đã trên 18")
+                    val ageGated = gateVisible
                     when {
                         // Trang bi cong tuoi (18+): bam nut xac nhan truoc
-                        hasContent && !isChallenge && ageGated && ageClicks < 3 -> {
+                        hasContent && !isChallenge && ageGated && ageClicks < 5 -> {
                             ageClicks++
                             webView.evaluateJavascript(AGE_GATE_JS) {
                                 main.postDelayed({ poll() }, 2000)
