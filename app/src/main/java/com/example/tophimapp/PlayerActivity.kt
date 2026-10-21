@@ -86,6 +86,41 @@ class PlayerActivity : AppCompatActivity() {
             })()
         """
 
+        // Tat tieng VINH VIEN moi the video/audio trong WebView do nguon
+        // (ke ca the moi tao sau nay): ban 1.4.1/1.4.2 de WebView ngam tu
+        // phat ca TIENG cua quang cao co bac trong luc do - nguoi dung
+        // thay man hinh den ma nghe tieng quang cao rat phan cam
+        private const val MUTE_JS = """
+            (function(){
+              function muteAll(){
+                var ms = document.querySelectorAll('video,audio');
+                for (var i=0;i<ms.length;i++){
+                  try{ ms[i].muted = true; ms[i].volume = 0; }catch(e){}
+                }
+              }
+              muteAll();
+              if (!window.__museMute){
+                window.__museMute = true;
+                setInterval(muteAll, 300);
+              }
+              return 'ok';
+            })()
+        """
+
+        // Tua thang doan quang cao mo dau ve gan cuoi de player cua web
+        // chuyen sang phim that ngay, thay vi phai cho phat het 50 giay
+        private const val FASTFORWARD_AD_JS = """
+            (function(){
+              var v = document.querySelector('video');
+              if (v && v.duration && isFinite(v.duration) &&
+                  v.duration > 0 && v.duration < 180 &&
+                  v.currentTime < v.duration - 2){
+                try{ v.currentTime = Math.max(0, v.duration - 0.5); return 'ff'; }catch(e){}
+              }
+              return 'no';
+            })()
+        """
+
         // Don manh cho trang nhung playembed: xoa link _blank + an overlay
         // quang cao phu rong man hinh (ke ca phan tu xuat hien sau)
         private const val CLEAN_EMBED_JS = """
@@ -364,6 +399,29 @@ class PlayerActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun probeRuntime() {
         progress.visibility = View.VISIBLE
+        // Dong chu trang thai giua man hinh: giai doan do nguon co the
+        // keo dai vai giay, de man hinh den thui + vong xoay khong thi
+        // nguoi dung tuong app treo (kem tieng quang cao ro ri cua ban cu)
+        val statusTv = android.widget.TextView(this)
+        statusTv.text =
+            "Đang tìm nguồn phát sạch…\n" +
+                "Đang tự bỏ qua quảng cáo mở đầu của web, chờ chút nhé"
+        statusTv.setTextColor(android.graphics.Color.WHITE)
+        statusTv.textSize = 15f
+        statusTv.gravity = android.view.Gravity.CENTER
+        statusTv.setPadding(56, 56, 56, 56)
+        try {
+            findViewById<FrameLayout>(R.id.playerRoot).addView(
+                statusTv,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    android.view.Gravity.CENTER
+                )
+            )
+        } catch (e: Exception) {
+            // bo qua
+        }
         val probe = WebView(applicationContext)
         try {
             android.webkit.CookieManager.getInstance()
@@ -391,6 +449,11 @@ class PlayerActivity : AppCompatActivity() {
                     null
                 }
             }
+
+            // Trang vua tai xong la tat tieng ngay (va lap lai lien tuc)
+            override fun onPageFinished(view: WebView?, url: String?) {
+                view?.evaluateJavascript(MUTE_JS, null)
+            }
         }
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         var probeDone = false
@@ -410,6 +473,11 @@ class PlayerActivity : AppCompatActivity() {
         fun finishProbe() {
             if (probeDone) return
             probeDone = true
+            try {
+                (statusTv.parent as? ViewGroup)?.removeView(statusTv)
+            } catch (e: Exception) {
+                // bo qua
+            }
             try {
                 probe.destroy()
             } catch (e: Exception) {
@@ -448,6 +516,8 @@ class PlayerActivity : AppCompatActivity() {
 
         fun pollProbe() {
             if (probeDone) return
+            // Moi vong deu tat tieng lai cho chac (the video moi tao)
+            probe.evaluateJavascript(MUTE_JS, null)
             probe.evaluateJavascript(PROBE_JS) { result ->
                 if (probeDone) return@evaluateJavascript
                 try {
@@ -464,9 +534,12 @@ class PlayerActivity : AppCompatActivity() {
                             movieUrl = src
                         } else if (dur > 0) {
                             // Luong ngan dang phat = quang cao mo dau:
-                            // ghi nho de tranh, thu bam nut bo qua QC
+                            // ghi nho de tranh, bam nut bo qua QC va TUA
+                            // THANG ve cuoi doan quang cao de player
+                            // chuyen sang phim that nhanh hon nhieu
                             adUrls.add(src)
                             probe.evaluateJavascript(SKIP_AD_JS, null)
+                            probe.evaluateJavascript(FASTFORWARD_AD_JS, null)
                         }
                     }
                     val res = o.optJSONArray("res")

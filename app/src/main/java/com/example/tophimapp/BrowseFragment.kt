@@ -38,6 +38,10 @@ class BrowseFragment : Fragment() {
     private lateinit var progress: android.widget.ProgressBar
     private lateinit var btnVerify: com.google.android.material.button.MaterialButton
     private lateinit var btnLoadMore: MaterialButton
+    private lateinit var tvDiag: android.widget.TextView
+    // Dong chan doan tung duong tai (hien khi that bai toan tap de nguoi
+    // dung chup lai - thay vi app im lang nhu cac ban truoc)
+    private val diagLines = ArrayList<String>()
     private var kind: String = KIND_SERIES
     private var loading = false
     private var verifyAutoOpened = false
@@ -69,6 +73,7 @@ class BrowseFragment : Fragment() {
         btnLoadMore.setOnClickListener { loadMore() }
         btnVerify = v.findViewById(R.id.btnVerify)
         btnVerify.setOnClickListener { openVerify() }
+        tvDiag = v.findViewById(R.id.tvLoadError)
         swipe.setOnRefreshListener { load() }
         load()
         return v
@@ -85,6 +90,8 @@ class BrowseFragment : Fragment() {
     private fun load() {
         if (loading) return
         loading = true
+        diagLines.clear()
+        if (::tvDiag.isInitialized) tvDiag.visibility = View.GONE
         items.clear()
         workingPath = null
         currentPage = 1
@@ -109,6 +116,7 @@ class BrowseFragment : Fragment() {
                 // Du phong WebView o duoi
             }
             activity?.runOnUiThread {
+                diagLines.add("Jsoup danh mục: ${list.size} phim")
                 if (list.isNotEmpty()) {
                     workingPath = path
                     showFirstPage(list)
@@ -128,6 +136,7 @@ class BrowseFragment : Fragment() {
         loading = false
         swipe.isRefreshing = false
         progress.visibility = View.GONE
+        if (::tvDiag.isInitialized) tvDiag.visibility = View.GONE
     }
 
     /** Them phim moi (bo qua phim da co) - tra ve so phim them duoc. */
@@ -260,6 +269,13 @@ class BrowseFragment : Fragment() {
                         // Thu duong dan tiep theo
                     }
                 }
+                val gateNote = if (html != null &&
+                    html.lowercase().contains("giới hạn độ tuổi")
+                ) " (trang vẫn còn cổng tuổi)" else ""
+                diagLines.add(
+                    "Web ${paths[idx]}: ${html?.length ?: 0} ký tự → " +
+                        "${list.size} phim$gateNote"
+                )
                 if (list.isNotEmpty()) {
                     activity?.runOnUiThread {
                         if (::btnVerify.isInitialized) btnVerify.visibility = View.GONE
@@ -274,9 +290,18 @@ class BrowseFragment : Fragment() {
         tryPath(0)
     }
 
-    /** Tai that bai o moi duong -> kha nang cao la o tick xac minh Cloudflare. */
+    /** Tai that bai o moi duong: hien chan doan cu the thay vi im lang. */
     private fun showVerifyOffer() {
         if (::btnVerify.isInitialized) btnVerify.visibility = View.VISIBLE
+        if (::tvDiag.isInitialized) {
+            tvDiag.visibility = View.VISIBLE
+            tvDiag.text = "Mục này chưa tải được. Chẩn đoán lần tải vừa rồi:\n" +
+                diagLines.joinToString("\n") +
+                "\nChụp màn hình này gửi lại giúp mình nhé."
+        }
+        // Tab 18+ that bai khong phai do Cloudflare -> khong tu day nguoi
+        // dung sang trang xac minh (cac ban truoc lam vay nen rat kho hieu)
+        if (kind == KIND_ADULT) return
         if (!verifyAutoOpened) {
             verifyAutoOpened = true
             Toast.makeText(

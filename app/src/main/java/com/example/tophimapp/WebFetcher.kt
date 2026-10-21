@@ -68,12 +68,14 @@ object WebFetcher {
         })()
     """
 
-    // Mot lan doc trang lay ca 2 thu: HTML cua trang + cong tuoi con
-    // DANG HIEN hay da tat (modal tat roi nhung van con trong DOM an
-    // thi text van con - phai nhin tinh trang hien that cua no)
-    private const val STATE_JS = """
+    // Cong tuoi con DANG HIEN hay da tat? (modal tat roi nhung van con
+    // trong DOM an thi text van con - phai nhin tinh trang hien that).
+    // Ket qua la chuoi NGAN 'visible'/'gone': doc RIENG voi HTML.
+    // Ban 1.4.2 gop buoc nay voi HTML thanh 1 JSON.stringify - trang
+    // nang nhu trang xem phim phinh qua gioi han ket qua cua
+    // evaluateJavascript nen tra ve RONG im lang (hoi quy xem phim).
+    private const val GATE_VISIBLE_JS = """
         (function(){
-          var gate = 'gone';
           var els = document.querySelectorAll('div,section,form,aside');
           for (var i=0;i<els.length;i++){
             var t = (els[i].textContent||'').toLowerCase();
@@ -81,10 +83,10 @@ object WebFetcher {
               var st = window.getComputedStyle(els[i]);
               var r = els[i].getBoundingClientRect();
               if (st.display !== 'none' && st.visibility !== 'hidden' &&
-                  r.width > 150 && r.height > 80){ gate = 'visible'; break; }
+                  r.width > 150 && r.height > 80) return 'visible';
             }
           }
-          return JSON.stringify({gate: gate, html: document.documentElement.outerHTML});
+          return 'gone';
         })()
     """
 
@@ -142,59 +144,67 @@ object WebFetcher {
             fun poll() {
                 if (done) return
                 val elapsed = System.currentTimeMillis() - startAt
-                webView.evaluateJavascript(STATE_JS) { result ->
+                // Buoc 1: cong tuoi con hien khong (ket qua rat nho)
+                webView.evaluateJavascript(GATE_VISIBLE_JS) { gateResult ->
                     if (done) return@evaluateJavascript
-                    var html: String? = null
-                    var gateVisible = false
-                    try {
-                        val raw = org.json.JSONTokener(result ?: "null")
-                            .nextValue()?.toString() ?: ""
-                        val o = org.json.JSONObject(raw)
-                        html = o.optString("html").ifEmpty { null }
-                        gateVisible = o.optString("gate") == "visible"
-                    } catch (e: Exception) {
-                        // Chua doc duoc trang thai: thu lai vong sau
-                    }
-                    val lower = html?.lowercase() ?: ""
-                    val isChallenge = CHALLENGE_MARKERS.any { lower.contains(it) }
-                    val hasContent = html != null && html.contains("/phim/")
-                    val ageGated = gateVisible
-                    when {
-                        // Trang bi cong tuoi (18+): bam nut xac nhan truoc
-                        hasContent && !isChallenge && ageGated && ageClicks < 5 -> {
-                            ageClicks++
-                            webView.evaluateJavascript(AGE_GATE_JS) {
-                                main.postDelayed({ poll() }, 2000)
+                    val gateVisible = decode(gateResult) == "visible"
+                    // Buoc 2: doc HTML truc tiep nhu ban <= 1.4.1 (ban
+                    // 1.4.2 dong goi JSON lam trang nang tra ve rong -
+                    // xem ghi chu o GATE_VISIBLE_JS)
+                    webView.evaluateJavascript(
+                        "(function(){return document.documentElement.outerHTML;})()"
+                    ) { result ->
+                        if (done) return@evaluateJavascript
+                        val html = decode(result)
+                        val lower = html?.lowercase() ?: ""
+                        val isChallenge = CHALLENGE_MARKERS.any { lower.contains(it) }
+                        val hasContent = html != null && html.contains("/phim/")
+                        val ageGated = gateVisible
+                        when {
+                            // Cong tuoi dang HIEN: bam nut xac nhan NGAY,
+                            // khong doi trang co link phim - khao sat truc
+                            // tiep (2026-10-22) cho thay trang cong la 1
+                            // TRANG RIENG do server tra ve, trong DOM co 0
+                            // link /phim/ (luoi phim vang mat hoan toan,
+                            // khong phai bi modal che). Cac ban truoc doi
+                            // hasContent moi bam nen khong bao gio bam
+                            // duoc. Bam xong trang se tu tai lai cung URL
+                            // va tra ve luoi phim that.
+                            !isChallenge && ageGated && ageClicks < 5 -> {
+                                ageClicks++
+                                webView.evaluateJavascript(AGE_GATE_JS) {
+                                    main.postDelayed({ poll() }, 2500)
+                                }
                             }
-                        }
-                        // Da qua kiem tra va co noi dung phim
-                        hasContent && !isChallenge -> {
-                            if (!expanded) {
-                                expanded = true
-                                webView.evaluateJavascript(EXPAND_JS) {
-                                    main.postDelayed({ poll() }, 2600)
-                                }
-                            } else {
-                                // Cho danh sach ON DINH (so link phim khong
-                                // tang nua) roi moi lay: ban truoc lay qua
-                                // som nen trang chu chi co 8 phim dau tien
-                                val count = lower.split("/phim/").size
-                                if (count == lastCount) stableRounds++
-                                else {
-                                    stableRounds = 0
-                                    lastCount = count
-                                }
-                                if (stableRounds >= 1 || elapsed > 26000) {
-                                    finish(html)
+                            // Da qua kiem tra va co noi dung phim
+                            hasContent && !isChallenge -> {
+                                if (!expanded) {
+                                    expanded = true
+                                    webView.evaluateJavascript(EXPAND_JS) {
+                                        main.postDelayed({ poll() }, 2600)
+                                    }
                                 } else {
-                                    main.postDelayed({ poll() }, 2000)
+                                    // Cho danh sach ON DINH (so link phim
+                                    // khong tang nua) roi moi lay: ban truoc
+                                    // lay qua som nen trang chu chi co 8 phim
+                                    val count = lower.split("/phim/").size
+                                    if (count == lastCount) stableRounds++
+                                    else {
+                                        stableRounds = 0
+                                        lastCount = count
+                                    }
+                                    if (stableRounds >= 1 || elapsed > 26000) {
+                                        finish(html)
+                                    } else {
+                                        main.postDelayed({ poll() }, 2000)
+                                    }
                                 }
                             }
+                            // Van o trang kiem tra: cho tiep (toi da 50 giay)
+                            elapsed < 30000 -> main.postDelayed({ poll() }, 2500)
+                            // Het gio: tra HTML hien tai (co the van la trang chan)
+                            else -> finish(html)
                         }
-                        // Van o trang kiem tra: cho tiep (toi da 50 giay)
-                        elapsed < 30000 -> main.postDelayed({ poll() }, 2500)
-                        // Het gio: tra HTML hien tai (co the van la trang chan)
-                        else -> finish(html)
                     }
                 }
             }
