@@ -63,8 +63,11 @@ class DbRepo(context: Context) :
             "SELECT url,title,poster,episode_count FROM favorites ORDER BY added_at DESC", null
         )
         while (c.moveToNext()) {
+            // Cot truy van: 0=url, 1=title, 2=poster - Movie(title, url,
+            // poster): ban cu nap nguoc 0/1 lam tieu de thanh duong link
+            // va app lay tieu de lam dia chi tai (tab Yeu thich hong han)
             list.add(
-                Movie(c.getString(0), c.getString(1), c.getString(2) ?: "") to c.getInt(3)
+                Movie(c.getString(1), c.getString(0), c.getString(2) ?: "") to c.getInt(3)
             )
         }
         c.close()

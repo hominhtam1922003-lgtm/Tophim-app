@@ -296,12 +296,19 @@ object TophimSource {
             description = doc.selectFirst("meta[name=description]")?.attr("content")?.trim() ?: ""
         }
 
-        // Danh sach tap: gom theo may chu (hau to sau dau = trong URL xem)
+        // Danh sach tap: gom theo may chu. Web co HAI dang link xem:
+        // - Dang duong dan /xem/{slug}/{tap}={server}: luoi tap phim bo
+        // - Dang tham so /xem/{slug}?ep={id}: phim le chi co nut "Xem
+        //   Ngay" (vd cac phim 18+ nhu Tam Giac Homejack)
+        // Ban cu cat bo phan "?..." roi moi doi chieu mau co dau "/" o
+        // cuoi slug nen dang tham so bi loai toan bo -> phim le nao cung
+        // ra 0 tap du trang chi tiet tai duoc binh thuong.
         val groups = LinkedHashMap<String, LinkedHashMap<String, Episode>>()
         for (a in doc.select("a[href]")) {
-            val href = a.absUrl("href").substringBefore("?").trimEnd('/')
-            if (!href.contains("/xem/$slug/")) continue
-            val tail = href.substringAfter("/xem/$slug/")
+            val href = a.absUrl("href").trimEnd('/')
+            val path = href.substringBefore("?")
+            if (!path.contains("/xem/$slug/")) continue
+            val tail = path.substringAfter("/xem/$slug/")
             val epSegment = tail.substringBefore("=")
             val serverKey = tail.substringAfter("=", "")
             val label = a.text().trim().ifBlank {
@@ -311,6 +318,18 @@ object TophimSource {
             if (label.isEmpty()) continue
             val g = groups.getOrPut(serverKey) { LinkedHashMap() }
             g[href] = Episode(label, href)
+        }
+        if (groups.isEmpty()) {
+            // Khong co luoi tap dang duong dan -> tim nut xem dang ?ep=
+            // (giu nguyen ca doan ?ep={id}: do la dinh danh cua tap)
+            for (a in doc.select("a[href]")) {
+                val href = a.absUrl("href").trimEnd('/')
+                if (!href.substringBefore("?").endsWith("/xem/$slug")) continue
+                if (!href.contains("?ep=")) continue
+                val label = a.text().trim().ifBlank { "Xem phim" }
+                val g = groups.getOrPut("") { LinkedHashMap() }
+                g[href] = Episode(label, href)
+            }
         }
         val servers = groups.entries.mapIndexed { idx, (_, eps) ->
             val sorted = eps.values.sortedWith(

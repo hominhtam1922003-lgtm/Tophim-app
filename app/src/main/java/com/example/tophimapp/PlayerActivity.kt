@@ -107,19 +107,7 @@ class PlayerActivity : AppCompatActivity() {
             })()
         """
 
-        // Tua thang doan quang cao mo dau ve gan cuoi de player cua web
-        // chuyen sang phim that ngay, thay vi phai cho phat het 50 giay
-        private const val FASTFORWARD_AD_JS = """
-            (function(){
-              var v = document.querySelector('video');
-              if (v && v.duration && isFinite(v.duration) &&
-                  v.duration > 0 && v.duration < 180 &&
-                  v.currentTime < v.duration - 2){
-                try{ v.currentTime = Math.max(0, v.duration - 0.5); return 'ff'; }catch(e){}
-              }
-              return 'no';
-            })()
-        """
+
 
         // Don manh cho trang nhung playembed: xoa link _blank + an overlay
         // quang cao phu rong man hinh (ke ca phan tu xuat hien sau)
@@ -534,12 +522,13 @@ class PlayerActivity : AppCompatActivity() {
                             movieUrl = src
                         } else if (dur > 0) {
                             // Luong ngan dang phat = quang cao mo dau:
-                            // ghi nho de tranh, bam nut bo qua QC va TUA
-                            // THANG ve cuoi doan quang cao de player
-                            // chuyen sang phim that nhanh hon nhieu
+                            // ghi nho de tranh, thu bam nut bo qua QC.
+                            // (Ban 1.4.3 co tua nhanh QC - da BO o 1.4.4
+                            // vi mot so player phat hien tua se phat lai
+                            // QC tu dau, do do cang lau; tra ve dung
+                            // hanh vi ban 1.4.1 xem muot.)
                             adUrls.add(src)
                             probe.evaluateJavascript(SKIP_AD_JS, null)
-                            probe.evaluateJavascript(FASTFORWARD_AD_JS, null)
                         }
                     }
                     val res = o.optJSONArray("res")

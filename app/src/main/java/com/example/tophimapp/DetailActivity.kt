@@ -91,9 +91,22 @@ class DetailActivity : AppCompatActivity() {
             }
             updateFavoriteButton()
         }
-        findViewById<Button>(R.id.btnWatchFirst).setOnClickListener {
+        // Khoa nut Xem ngay cho den khi tai xong danh sach tap: ban cu
+        // de bam duoc trong khi chua co tap nao -> player mo ra do
+        // nguon tren trang khong phai trang xem, quay rat lau roi bao loi
+        val btnWatch = findViewById<Button>(R.id.btnWatchFirst)
+        btnWatch.isEnabled = false
+        btnWatch.setOnClickListener {
             val first = detail?.servers?.firstOrNull()?.episodes?.firstOrNull()
-            if (first != null) playEpisode(first)
+            if (first != null) {
+                playEpisode(first)
+            } else {
+                Toast.makeText(
+                    this,
+                    "Danh sách tập chưa tải xong, chờ chút rồi thử lại nhé",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
 
         loadDetail()
@@ -124,7 +137,7 @@ class DetailActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadDetailViaWeb() {
+    private fun loadDetailViaWeb(attempt: Int = 1) {
         WebFetcher.fetchHtml(this, movieUrl) { html ->
             var d: MovieDetail? = null
             if (html != null) {
@@ -135,10 +148,17 @@ class DetailActivity : AppCompatActivity() {
                 }
             }
             runOnUiThread {
-                findViewById<ProgressBar>(R.id.detailProgress).visibility = View.GONE
                 if (d != null && d.servers.isNotEmpty()) {
                     showDetail(d)
+                } else if (attempt < 2) {
+                    // Thu lai 1 lan: lan tai dau co the vua bam qua cong
+                    // tuoi/xac minh xong, anh chup trang chua kip la
+                    // trang that (trang thai mo khoa da duoc luu ben
+                    // nen lan 2 thuong vao thang)
+                    android.os.Handler(android.os.Looper.getMainLooper())
+                        .postDelayed({ loadDetailViaWeb(attempt + 1) }, 1500)
                 } else {
+                    findViewById<ProgressBar>(R.id.detailProgress).visibility = View.GONE
                     Toast.makeText(
                         this,
                         "Không tải được danh sách tập (web đang chặn). Thử lại sau ít phút.",
@@ -151,6 +171,7 @@ class DetailActivity : AppCompatActivity() {
 
     private fun showDetail(d: MovieDetail) {
         findViewById<ProgressBar>(R.id.detailProgress).visibility = View.GONE
+        findViewById<Button>(R.id.btnWatchFirst).isEnabled = true
         detail = d
         title = d.movie.title
         findViewById<TextView>(R.id.tvDetailTitle).text = d.movie.title
