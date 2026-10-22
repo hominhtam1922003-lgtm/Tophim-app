@@ -290,8 +290,16 @@ class HomeFragment : Fragment() {
                 if (gen != searchGeneration) return@runOnUiThread
                 if (page != null && page.movies.isNotEmpty()) {
                     val known = searchMovies.map { it.url }.toHashSet()
-                    searchMovies.addAll(page.movies.filter { known.add(it.url) })
-                    searchPage = next
+                    val added = page.movies.filter { known.add(it.url) }
+                    searchMovies.addAll(added)
+                    if (added.isNotEmpty() ||
+                        page.movies.size >= TophimSource.PAGE_SIZE
+                    ) {
+                        searchPage = next
+                        searchTotalPages = page.totalPages
+                    } else {
+                        searchTotalPages = searchPage
+                    }
                     adapter.submit(searchMovies.map { HomeItem.MovieItem(it) })
                 } else {
                     searchTotalPages = searchPage

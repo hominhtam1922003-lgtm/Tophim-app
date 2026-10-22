@@ -147,11 +147,16 @@ object TophimSource {
 
     // ---------------- Danh sach / tim kiem / loc ----------------
 
+    /** Co trang chuan cua web: 32 phim/trang (khop trang danh sach tren web). */
+    const val PAGE_SIZE = 32
+
     /**
      * Endpoint dung chung cho moi danh sach cua web: tim tu khoa, phim
      * le/bo, chieu rap, the loai, quoc gia, trang loc. Params hop le:
      * keyword, countries (id cach nhau dau phay), genres, years,
      * type (movie|series), sort (updatedAt|imdb_rating), rating.
+     * LUON kem limit=PAGE_SIZE: thieu tham so nay API chi tra ~5
+     * phim/trang (loi ban 2.0: cac tab danh muc chi thay vai phim).
      */
     fun searchMovies(params: Map<String, String>, page: Int): SearchPage {
         val q = StringBuilder()
@@ -161,12 +166,20 @@ object TophimSource {
             q.append(k).append('=').append(enc(v))
         }
         if (q.isNotEmpty()) q.append('&')
-        q.append("page=").append(page)
+        q.append("limit=").append(PAGE_SIZE).append("&page=").append(page)
         val o = getJsonObject("/movies/search?$q")
+        val movies = moviesFromArray(o.optJSONArray("result"))
         val meta = o.optJSONObject("meta")
+        // CAN TRONG: meta.total/totalPages cua API bi loi (total =
+        // page*limit+1, tang dan theo trang dang xem) — ban 2.0 tin
+        // totalPages nen cac tab dung o ~15 phim. Quy tac dung (da
+        // kiem chung truc tiep: trang sau van con phim that): trang
+        // day (du PAGE_SIZE phim) nghia la con trang sau; trang thieu
+        // phim la trang cuoi.
+        val totalPages = if (movies.size >= PAGE_SIZE) page + 1 else page
         return SearchPage(
-            movies = moviesFromArray(o.optJSONArray("result")),
-            totalPages = meta?.optInt("totalPages", 1) ?: 1,
+            movies = movies,
+            totalPages = totalPages,
             total = meta?.optInt("total", 0) ?: 0
         )
     }

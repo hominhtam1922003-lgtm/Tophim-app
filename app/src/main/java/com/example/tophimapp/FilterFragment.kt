@@ -249,10 +249,15 @@ class FilterFragment : Fragment() {
                     items.addAll(page.movies)
                     currentPage = 1
                     totalPages = page.totalPages
+                    // Khong in page.total: so tong cua API bi loi (tinh
+                    // theo trang dang xem). Trang dau da thieu phim =
+                    // toan bo ket qua; trang day = con nua chua tai.
                     tvCount.text = if (page.movies.isEmpty()) {
                         "Không có phim nào khớp bộ lọc này."
+                    } else if (totalPages <= 1) {
+                        "Tìm thấy ${items.size} phim"
                     } else {
-                        "Tìm thấy ${page.total} phim"
+                        "Đã tải ${items.size} phim — bấm Tải thêm để xem tiếp"
                     }
                 } else {
                     totalPages = 1
@@ -292,7 +297,12 @@ class FilterFragment : Fragment() {
                     if (added.isNotEmpty()) {
                         items.addAll(added)
                         currentPage = next
+                        totalPages = page.totalPages
+                        tvCount.text = "Đã tải ${items.size} phim"
                         adapter.submit(items.toList())
+                    } else if (page.movies.size >= TophimSource.PAGE_SIZE) {
+                        currentPage = next
+                        totalPages = page.totalPages
                     } else {
                         totalPages = currentPage
                     }

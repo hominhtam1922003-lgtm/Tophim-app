@@ -210,7 +210,13 @@ class BrowseFragment : Fragment() {
                     if (added.isNotEmpty()) {
                         items.addAll(added)
                         currentPage = next
+                        totalPages = page.totalPages
                         adapter.submit(items.toList())
+                    } else if (page.movies.size >= TophimSource.PAGE_SIZE) {
+                        // Trang day nhung trung het (phim moi cap nhat
+                        // day phim cu sang trang sau): van di tiep
+                        currentPage = next
+                        totalPages = page.totalPages
                     } else {
                         totalPages = currentPage
                     }
