@@ -9,7 +9,7 @@
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
         android:background="?attr/colorPrimary"
-        app:title="Top Phim"
+        app:title="Cine"
         app:titleTextColor="#FFFFFF"
         xmlns:app="http://schemas.android.com/apk/res-auto" />
 
@@ -49,10 +49,16 @@
             android:text="Phim bộ" />
 
         <TextView
-            android:id="@+id/tabAdult"
+            android:id="@+id/tabCinema"
             style="@style/BottomTab"
             android:drawableTop="@android:drawable/ic_menu_myplaces"
-            android:text="18+" />
+            android:text="Chiếu rạp" />
+
+        <TextView
+            android:id="@+id/tabFilter"
+            style="@style/BottomTab"
+            android:drawableTop="@android:drawable/ic_menu_search"
+            android:text="Lọc phim" />
 
         <TextView
             android:id="@+id/tabFavorites"

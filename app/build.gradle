@@ -11,8 +11,8 @@ android {
         applicationId 'com.example.tophimapp'
         minSdk 21
         targetSdk 34
-        versionCode 13
-        versionName '1.5'
+        versionCode 14
+        versionName '2.0'
     }
 
     buildTypes {
@@ -43,4 +43,41 @@ dependencies {
     implementation 'com.github.bumptech.glide:glide:4.16.0'
     // Kiem tra chap moi dinh ky o nen (thong bao)
     implementation 'androidx.work:work-runtime-ktx:2.9.1'
+}
+
+// ---- Icon launcher (ban 2.0) ----
+// Kenh day code len GitHub chi nhan file VAN BAN nen cac PNG icon duoc
+// luu dang base64 trong app/icon-b64/ (a anh xa theo cau truc res).
+// Task nay giai nen chung thanh PNG that vao thu muc res phat sinh
+// truoc khi dong goi tai nguyen; noi dung PNG khong doi 1 byte.
+def cineIconOut = layout.buildDirectory.dir('generated/cineIcons/res')
+tasks.register('generateCineIcons') {
+    def b64Dir = layout.projectDirectory.dir('icon-b64')
+    inputs.dir(b64Dir)
+    outputs.dir(cineIconOut)
+    doLast {
+        def srcRoot = b64Dir.asFile
+        def outRoot = cineIconOut.get().asFile
+        srcRoot.eachFileRecurse { f ->
+            if (f.name.endsWith('.b64')) {
+                def rel = srcRoot.toPath().relativize(f.toPath()).toString()
+                def target = new File(outRoot, rel.replace('.b64', ''))
+                target.parentFile.mkdirs()
+                target.bytes = java.util.Base64.decoder.decode(
+                    f.getText('UTF-8').replaceAll('\\s', ''))
+            }
+        }
+    }
+}
+android {
+    sourceSets {
+        main {
+            res.srcDirs += cineIconOut.get().asFile
+        }
+    }
+}
+tasks.configureEach { t ->
+    if (t.name == 'preBuild') {
+        t.dependsOn('generateCineIcons')
+    }
 }

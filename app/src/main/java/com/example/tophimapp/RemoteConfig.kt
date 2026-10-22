@@ -9,12 +9,16 @@ import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 /**
- * Chong doi ten mien cho nguon truyen:
- * 1) Doc file config.json nam tren repo GitHub cua chu app (sua 1 dong la
- *    moi ban app dang cai tu cap nhat ten mien moi, khong can cai lai).
- * 2) Thu lan luot: ten mien trong config -> cac ten mien guong -> ten mien
- *    tot gan nhat (luu trong may) -> ten mien mac dinh.
- * 3) Ten mien nao tra ve dung trang TruyenQQ thi chot dung ten mien do.
+ * Chong doi ten mien cho nguon phim:
+ * 1) Doc file config.json nam tren repo GitHub cua chu app (sua file do
+ *    la moi ban app dang cai tu cap nhat, khong can cai lai):
+ *      {"base": "https://cobephim.icu",
+ *       "apiBase": "https://...darkbytes.xyz/api/v1",
+ *       "mirrors": [...], "apiMirrors": [...]}
+ * 2) Thu lan luot: gia tri trong config -> cac ten mien guong -> ten
+ *    mien tot gan nhat (luu trong may) -> mac dinh trong code.
+ * 3) API chot khi goi /movies/hot tra JSON co "result"; web chot khi
+ *    mo duoc trang chu (bat ky phan hoi HTTP nao tu ten mien song).
  */
 object RemoteConfig {
 
@@ -22,6 +26,7 @@ object RemoteConfig {
         "https://raw.githubusercontent.com/hominhtam1922003-lgtm/Tophim-app/main/config.json"
     private const val PREFS = "remote_config"
     private const val KEY_LAST_GOOD = "last_good_base"
+    private const val KEY_LAST_GOOD_API = "last_good_api"
 
     private val latch = CountDownLatch(1)
     @Volatile private var started = false
@@ -45,32 +50,50 @@ object RemoteConfig {
 
     fun resolveBlocking(context: Context) {
         try {
-            val candidates = ArrayList<String>()
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            var base = TophimSource.DEFAULT_BASE
+            var apiBase = TophimSource.DEFAULT_API_BASE
 
-            // 1) Cau hinh tu xa tren GitHub
             fetchConfig()?.let { json ->
-                json.optString("base").trim().trimEnd('/').takeIf { it.startsWith("http") }
-                    ?.let { candidates.add(it) }
-                json.optJSONArray("mirrors")?.let { arr ->
+                json.optString("base").trim().trimEnd('/')
+                    .takeIf { it.startsWith("http") }?.let { base = it }
+                json.optString("apiBase").trim().trimEnd('/')
+                    .takeIf { it.startsWith("http") }?.let { apiBase = it }
+
+                val apiCandidates = ArrayList<String>()
+                apiCandidates.add(apiBase)
+                json.optJSONArray("apiMirrors")?.let { arr ->
                     for (i in 0 until arr.length()) {
-                        arr.optString(i).trim().trimEnd('/').takeIf { it.startsWith("http") }
-                            ?.let { candidates.add(it) }
+                        arr.optString(i).trim().trimEnd('/')
+                            .takeIf { it.startsWith("http") }?.let { apiCandidates.add(it) }
                     }
                 }
-            }
+                prefs.getString(KEY_LAST_GOOD_API, null)?.let { apiCandidates.add(it) }
+                apiCandidates.add(TophimSource.DEFAULT_API_BASE)
+                for (candidate in apiCandidates.distinct()) {
+                    if (probeApi(candidate)) {
+                        TophimSource.activeApiBase = candidate
+                        prefs.edit().putString(KEY_LAST_GOOD_API, candidate).apply()
+                        break
+                    }
+                }
 
-            // 2) Ten mien tot gan nhat + mac dinh
-            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            prefs.getString(KEY_LAST_GOOD, null)?.let { candidates.add(it) }
-            candidates.add(TophimSource.DEFAULT_BASE)
-
-            // 3) Thu tung ten mien, chot cai dau tien dung duoc
-            for (candidate in candidates.distinct()) {
-                val effective = probe(candidate)
-                if (effective != null) {
-                    TophimSource.activeBase = effective
-                    prefs.edit().putString(KEY_LAST_GOOD, effective).apply()
-                    break
+                val baseCandidates = ArrayList<String>()
+                baseCandidates.add(base)
+                json.optJSONArray("mirrors")?.let { arr ->
+                    for (i in 0 until arr.length()) {
+                        arr.optString(i).trim().trimEnd('/')
+                            .takeIf { it.startsWith("http") }?.let { baseCandidates.add(it) }
+                    }
+                }
+                prefs.getString(KEY_LAST_GOOD, null)?.let { baseCandidates.add(it) }
+                baseCandidates.add(TophimSource.DEFAULT_BASE)
+                for (candidate in baseCandidates.distinct()) {
+                    if (probeWeb(candidate)) {
+                        TophimSource.activeBase = candidate
+                        prefs.edit().putString(KEY_LAST_GOOD, candidate).apply()
+                        break
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -97,26 +120,40 @@ object RemoteConfig {
         }
     }
 
-    /**
-     * Dung duoc = tai duoc trang chu va thay link truyen that (khong phai trang chan).
-     * Tra ve ten mien thuc te (sau chuyen huong neu co), null neu khong dung duoc.
-     */
-    private fun probe(base: String): String? {
+    private fun httpGet(url: String, timeoutMs: Int): Pair<Int, String> {
+        var conn: HttpURLConnection? = null
+        try {
+            conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = timeoutMs
+                readTimeout = timeoutMs
+                setRequestProperty("User-Agent", TophimSource.UA)
+            }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
+            return code to text
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    /** API dung duoc = /movies/hot tra JSON chua danh sach ket qua. */
+    private fun probeApi(apiBase: String): Boolean {
         return try {
-            val doc = org.jsoup.Jsoup.connect("$base/")
-                .userAgent(TophimSource.UA)
-                .header("Accept-Language", "vi-VN,vi;q=0.9")
-                .cookies(TophimSource.cfCookies())
-                .timeout(8000)
-                .followRedirects(true)
-                .get()
-            if (doc.title().contains("Just a moment", true)) return null
-            if (doc.selectFirst("a[href*=/phim/]") == null) return null
-            // Neu bi chuyen huong sang ten mien moi, hoc luon ten mien dich
-            val m = Regex("""^(https?://[^/]+)""").find(doc.location())
-            m?.value ?: base
+            val (code, body) = httpGet("$apiBase/movies/hot", 8000)
+            code == 200 && body.contains("\"result\"")
         } catch (e: Exception) {
-            null
+            false
+        }
+    }
+
+    /** Web dung duoc = ten mien con song (tra phan hoi HTTP that). */
+    private fun probeWeb(base: String): Boolean {
+        return try {
+            val (code, _) = httpGet("$base/", 8000)
+            code in 200..399
+        } catch (e: Exception) {
+            false
         }
     }
 }

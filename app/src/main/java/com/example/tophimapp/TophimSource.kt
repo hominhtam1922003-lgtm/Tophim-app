@@ -1,36 +1,70 @@
 package com.example.tophimapp
 
-import org.jsoup.Jsoup
-import org.jsoup.nodes.Document
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
 
 /**
- * Nguon du lieu: tophim.pro (Top Phim / ToPhim).
+ * Nguon du lieu: cobephim.icu — app "Cine" (tu ban 2.0).
  *
- * KET QUA KHAO SAT TRUC TIEP (22/10/2026):
- * - Trang chu: tieu de "To Phim - Xem Phim Khong Gioi Han"
- * - Trang chi tiet phim: /phim/{slug}   (khong co ID so o cuoi)
- * - Trang xem tap:       /xem/{slug}/{tap}={may-chu}={may-chu}
- *   vi du: /xem/nghi-pham-dang-yeu-cua-toi/1=may-chu-sn-may-chu-sn
- * - Tim kiem: /filter?search={tu-khoa}  (render phia server)
- * - Poster: anh TMDB (image.tmdb.org) proxy qua wsrv.nl
- * - Video: nhung <iframe> tu playembed.vip/player/{hash}/sub
- * - Web co Cloudflare kiem tra bot moi lan tai trang -> Jsoup co the bi chan,
- *   cac man hinh chinh deu co duong du phong WebView (WebFetcher).
+ * KET QUA KHAO SAT TRUC TIEP (22/10/2026, 2 vong doc goi JS + goi thu API):
+ * Web la Next.js, du lieu nam o API JSON CONG KHAI rieng (khong can
+ * dang nhap/token cho cac endpoint doc):
+ *   API goc: https://egluy2hhb21vaw5ndw9pbmhl.darkbytes.xyz/api/v1
+ *   - GET /movies/hot                          -> {result: [phim]}
+ *   - GET /lists/homepageLists?page&limit      -> {result:{collections:[{name, movies[]}]}}
+ *   - GET /movies/search?keyword=&countries=&genres=&years=&type=&sort=&page=
+ *                                              -> {result: [phim], meta:{total,totalPages}}
+ *   - GET /movies/by-slug/{slug}               -> {movie: {...chi tiet...}}
+ *   - GET /episodes/by-idMovie/{movieId}       -> mang THANG toan bo tap
+ *        (khong phan trang; moi tap co id + server chua nhan ban chieu:
+ *         "Phu de", "Thuyet Minh", "Long tieng", "#Ha Noi (Vietsub)"...)
+ *   - GET /categories?limit=100 / /regions?limit=100&page= : bang ma
+ *        the loai (80) + quoc gia (137) cho trang Loc phim.
+ * Anh bia DOC nam o field "poster" (ban ngang la "thumbnail"),
+ * host anh icdn.darkbytes.xyz.
+ * PHAT PHIM: phan hoi cong khai KHONG chua link luong (link that khoa
+ * sau token) — duong phat chinh thuc ma web dung la trang
+ *   {host API}/embed/{episodeId}
+ * PlayerActivity se do trang do de bat luong thang; khong bat duoc
+ * moi phat bang chinh trang embed do (da khoa popup/dieu huong).
+ * Web KHONG co Cloudflare, KHONG cong tuoi, KHONG quang cao banner;
+ * click tren web hay bat cua so quang cao rieng (popunder) — app doc
+ * API nen khong dung toi co che do.
  */
 object TophimSource {
 
-    const val DEFAULT_BASE = "https://tophim.pro"
+    const val DEFAULT_BASE = "https://cobephim.icu"
+    const val DEFAULT_API_BASE = "https://egluy2hhb21vaw5ndw9pbmhl.darkbytes.xyz/api/v1"
 
-    /** Ten mien dang dung that (RemoteConfig cap nhat khi web doi ten mien). */
+    /** Ten mien web dang dung (RemoteConfig cap nhat khi web doi ten mien). */
     @Volatile
     var activeBase: String = DEFAULT_BASE
+
+    /** Goc API dang dung (RemoteConfig cap nhat cung config). */
+    @Volatile
+    var activeApiBase: String = DEFAULT_API_BASE
 
     val BASE: String
         get() = activeBase
 
+    val API_BASE: String
+        get() = activeApiBase
+
+    /** Host goc cua API (bo hau to /api/v1): noi o trang phat /embed/{id}. */
+    val API_HOST: String
+        get() = Regex("""^https?://[^/]+""").find(activeApiBase)?.value ?: activeApiBase
+
+    /** Trang phat chinh thuc cua 1 tap. */
+    fun embedUrl(episodeId: Long): String = "$API_HOST/embed/$episodeId"
+
+    fun detailUrl(slug: String): String = "$BASE/phim/$slug"
+
     /** URL da luu co the con o ten mien cu: doi host ve ten mien dang dung. */
     fun rebase(url: String): String {
-        if (!url.contains("/phim/") && !url.contains("/xem/")) return url
+        if (!url.contains("/phim/")) return url
         val host = Regex("""^https?://[^/]+""").find(url)?.value ?: return url
         return if (host == activeBase) url else activeBase + url.substring(host.length)
     }
@@ -39,352 +73,264 @@ object TophimSource {
         "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.71 Mobile Safari/537.36"
 
     /**
-     * User-Agent dung chung cho CA app (Jsoup, WebView, xac minh, player).
-     * MainActivity ghi de bang UA THAT cua may (WebSettings
-     * .getDefaultUserAgent) ngay khi app mo, de dau van tay nhat quan
-     * nhu Chrome that. Ban <=1.2.1 khai UA Windows tren dien thoai
-     * Android -> Cloudflare doi chieu thay mau thuan nen man hinh
-     * xac minh quay vong lap mai khong qua duoc.
+     * User-Agent dung chung cho ca app. MainActivity ghi de bang UA THAT
+     * cua may ngay khi mo app (thua huong tu thoi nguon cu can dau van
+     * tay nhat quan; nguon moi khong chan bot nen khong con bat buoc,
+     * giu de moi request trong app dong nhat).
      */
     @Volatile
     var UA: String = FALLBACK_UA
 
-    class BlockedException : Exception("Cloudflare blocked")
-
-    private val detailRegex = Regex("""/phim/[a-z0-9\-]+$""")
-    private val yearRegex = Regex("""\b(19|20)\d{2}\b""")
-    private val qualityRegex = Regex("""\b(FHD|HD|CAM|SD|4K)\b""", RegexOption.IGNORE_CASE)
-    private val episodeTextRegex = Regex("""Tập\s*[\d]+[^\s•|]*""", RegexOption.IGNORE_CASE)
-
     fun slugOf(detailUrl: String): String =
         detailUrl.substringAfter("/phim/").substringBefore("?").trimEnd('/')
 
-    /**
-     * Cookie "thong hanh" Cloudflare (cf_clearance) ma WebView cua app da
-     * nhan duoc sau khi nguoi dung tu xac minh 1 lan trong VerifyActivity.
-     * Gan vao request Jsoup (kem dung User-Agent da xac minh) thi tai sieu
-     * nhanh va khong bi chan. Chua xac minh -> tra ve map rong.
-     */
-    fun cfCookies(): Map<String, String> {
-        return try {
-            val raw = android.webkit.CookieManager.getInstance().getCookie(BASE)
-                ?: return emptyMap()
-            raw.split(";").mapNotNull { part ->
-                val i = part.indexOf('=')
-                if (i > 0) {
-                    part.substring(0, i).trim() to part.substring(i + 1).trim()
-                } else {
-                    null
-                }
-            }.toMap()
-        } catch (e: Exception) {
-            emptyMap()
-        }
-    }
+    // ---------------- HTTP JSON ----------------
 
-    fun fetchDoc(rawUrl: String): Document {
-        val url = rebase(rawUrl)
-        val doc = Jsoup.connect(url)
-            .userAgent(UA)
-            .header("Accept-Language", "vi-VN,vi;q=0.9,en;q=0.8")
-            .header("Referer", "$BASE/")
-            .cookies(cfCookies())
-            .timeout(12000)
-            .followRedirects(true)
-            .get()
-        val text = doc.text()
-        if (doc.title().contains("Just a moment", true) ||
-            text.contains("xác minh bạn là con người", true) ||
-            text.contains("Thực hiện xác minh bảo mật", true)
-        ) {
-            throw BlockedException()
-        }
-        return doc
-    }
-
-    fun parseHtml(html: String, baseUrl: String): Document = Jsoup.parse(html, baseUrl)
-
-    private fun imgUrl(img: org.jsoup.nodes.Element): String {
-        for (attr in listOf("data-src", "data-original", "data-lazy-src", "data-url", "src")) {
-            val v = img.absUrl(attr)
-            if (v.isNotEmpty() && !v.contains("placeholder", true) && !v.endsWith("loading.gif")) {
-                return v
+    private fun getText(url: String): String {
+        var conn: HttpURLConnection? = null
+        try {
+            conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 12000
+                readTimeout = 20000
+                setRequestProperty("User-Agent", UA)
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("Accept-Language", "vi-VN,vi;q=0.9")
             }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+            if (code !in 200..299) throw Exception("HTTP $code")
+            return text
+        } finally {
+            conn?.disconnect()
         }
-        // Ban di dong cua web (app dung UA dien thoai) de link anh that
-        // trong srcset cua the img - thieu nhanh nay la mat anh bia hang
-        // loat nhu anh chup nguoi dung gui
-        val srcset = img.attr("srcset")
-        if (srcset.isNotBlank()) {
-            val first = srcset.split(",").firstOrNull()?.trim()
-                ?.split(" ")?.firstOrNull() ?: ""
-            if (first.startsWith("http")) return first
-            if (first.startsWith("//")) return "https:$first"
-            if (first.startsWith("/")) return BASE + first
-        }
-        val dataSrcset = img.attr("data-srcset")
-        if (dataSrcset.isNotBlank()) {
-            val first = dataSrcset.split(",").firstOrNull()?.trim()
-                ?.split(" ")?.firstOrNull() ?: ""
-            if (first.startsWith("http")) return first
-            if (first.startsWith("//")) return "https:$first"
-            if (first.startsWith("/")) return BASE + first
-        }
-        // Markup kieu <picture><source srcset="..."><img src="placeholder">:
-        // link that nam o the source anh em/cha, khong nam tren the img
-        val picture = img.parents().firstOrNull { it.tagName() == "picture" }
-        val source = picture?.selectFirst("source[srcset], source[data-srcset]")
-        if (source != null) {
-            val ss = source.attr("srcset").ifBlank { source.attr("data-srcset") }
-            val first = ss.split(",").firstOrNull()?.trim()
-                ?.split(" ")?.firstOrNull() ?: ""
-            if (first.startsWith("http")) return first
-            if (first.startsWith("//")) return "https:$first"
-            if (first.startsWith("/")) return BASE + first
-        }
-        return img.absUrl("src")
     }
 
-    // ---------------- Danh sach phim ----------------
+    private fun getJsonObject(path: String): JSONObject =
+        JSONObject(getText(API_BASE + path))
 
-    fun fetchHome(): List<Movie> = parseList(fetchDoc("$BASE/"))
+    private fun getJsonArray(path: String): JSONArray =
+        JSONArray(getText(API_BASE + path))
+
+    /** Ma hoa gia tri tham so truy van (giu nguyen dau phay cua danh sach id). */
+    private fun enc(v: String): String =
+        URLEncoder.encode(v, "UTF-8").replace("%2C", ",")
+
+    // ---------------- Anh xa phim ----------------
+
+    fun movieFromJson(o: JSONObject): Movie {
+        val slug = o.optString("slug")
+        val title = o.optString("name").ifBlank { o.optString("origin_name") }
+        var poster = o.optString("poster")
+        if (poster.isBlank()) poster = o.optString("thumbnail")
+        val parts = ArrayList<String>()
+        o.optString("quality").takeIf { it.isNotBlank() }?.let { parts.add(it) }
+        val cur = o.optString("episode_current").trim()
+        if (cur.isNotEmpty()) {
+            parts.add(if (cur.all { it.isDigit() }) "Tập $cur" else cur)
+        }
+        val year = o.optInt("publish_year", 0)
+        if (year > 0) parts.add(year.toString())
+        return Movie(title, detailUrl(slug), poster, parts.joinToString(" • "))
+    }
+
+    private fun moviesFromArray(arr: JSONArray?): List<Movie> {
+        if (arr == null) return emptyList()
+        val out = ArrayList<Movie>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val m = movieFromJson(o)
+            if (m.title.isNotEmpty() && o.optString("slug").isNotEmpty()) out.add(m)
+        }
+        return out
+    }
+
+    // ---------------- Danh sach / tim kiem / loc ----------------
 
     /**
-     * Duong dan danh muc: uu tien dung link menu chinh cua web that
-     * (/phim-le, /phim-bo, /phim-18 - xac thuc nguyen van 22/10/2026),
-     * cac dang du phong xep sau.
+     * Endpoint dung chung cho moi danh sach cua web: tim tu khoa, phim
+     * le/bo, chieu rap, the loai, quoc gia, trang loc. Params hop le:
+     * keyword, countries (id cach nhau dau phay), genres, years,
+     * type (movie|series), sort (updatedAt|imdb_rating), rating.
      */
-    fun categoryPaths(kind: String): List<String> = when (kind) {
-        "series" -> listOf("/phim-bo", "/danh-sach/phim-bo")
-        "adult" -> listOf("/phim-18", "/the-loai/phim-18-1", "/the-loai/phim-18-2")
-        else -> listOf("/phim-le", "/danh-sach/phim-le")
-    }
-
-    fun fetchCategory(kind: String): List<Movie> = fetchCategoryPage(kind, 1).second
-
-    /**
-     * Tai 1 trang cua danh muc; tra ve (duong dan dung duoc, danh sach).
-     * Phan trang cua web la ?page=N (xac thuc 22/10/2026: /phim-bo co
-     * 16 phim/trang, /phim-18 co 24 phim/trang).
-     * TUYET DOI khong duoc "lay tam trang chu" khi that bai nhu truoc:
-     * chinh dong du phong do lam tab 18+ hien y het trang chu.
-     */
-    fun fetchCategoryPage(kind: String, page: Int): Pair<String?, List<Movie>> {
-        for (p in categoryPaths(kind)) {
-            try {
-                val url = if (page <= 1) "$BASE$p" else "$BASE$p?page=$page"
-                val list = parseList(fetchDoc(url))
-                if (list.isNotEmpty()) return p to list
-            } catch (e: Exception) {
-                // Thu duong dan tiep theo
-            }
+    fun searchMovies(params: Map<String, String>, page: Int): SearchPage {
+        val q = StringBuilder()
+        for ((k, v) in params) {
+            if (v.isBlank()) continue
+            if (q.isNotEmpty()) q.append('&')
+            q.append(k).append('=').append(enc(v))
         }
-        return null to emptyList()
-    }
-
-    fun searchUrl(keyword: String): String =
-        "$BASE/filter?search=${java.net.URLEncoder.encode(keyword, "UTF-8")}"
-
-    fun search(keyword: String): List<Movie> = parseList(fetchDoc(searchUrl(keyword)))
-
-    fun parseList(doc: Document): List<Movie> {
-        val result = LinkedHashMap<String, Movie>()
-        for (a in doc.select("a[href]")) {
-            val href = a.absUrl("href").substringBefore("?").trimEnd('/')
-            if (!detailRegex.containsMatchIn(href)) continue
-            if (result.containsKey(href)) continue
-            // Anh poster: trong the a hoac o khoi cha gan nhat
-            var container: org.jsoup.nodes.Element? = a
-            var img: org.jsoup.nodes.Element? = a.selectFirst("img")
-            var depth = 0
-            while (img == null && container != null && depth < 4) {
-                container = container.parent()
-                img = container?.selectFirst("img")
-                depth++
-            }
-            if (img == null) continue
-            val title = img.attr("alt").trim()
-                .ifBlank { a.attr("title").trim() }
-                .ifBlank {
-                    // Tim tieu de o the h2/h3 gan nhat trong khoi item
-                    var n: org.jsoup.nodes.Element? = a
-                    var t = ""
-                    var d = 0
-                    while (n != null && d < 4 && t.isEmpty()) {
-                        t = n.selectFirst("h2, h3, h4")?.text()?.trim() ?: ""
-                        n = n.parent(); d++
-                    }
-                    t
-                }
-                .ifBlank { a.text().trim() }
-            if (title.isEmpty() || title.length < 2) continue
-            // Dong phu: nam + chat luong + tap moi nhat trong khoi item
-            val blockText = (container?.text() ?: a.parent()?.text() ?: "").take(400)
-            val parts = ArrayList<String>()
-            yearRegex.find(blockText)?.value?.let { parts.add(it) }
-            qualityRegex.find(blockText)?.value?.uppercase()?.let { parts.add(it) }
-            episodeTextRegex.find(blockText)?.value?.trim()?.let { parts.add(it) }
-            result[href] = Movie(title, href, imgUrl(img), parts.joinToString(" • "))
-        }
-        return result.values.toList()
-    }
-
-    // ---------------- Chi tiet phim + danh sach tap ----------------
-
-    fun fetchDetail(detailUrl: String): MovieDetail = parseDetail(fetchDoc(detailUrl), detailUrl)
-
-    fun parseDetail(doc: Document, detailUrl: String): MovieDetail {
-        val url = rebase(detailUrl)
-        val slug = slugOf(url)
-        var title = doc.selectFirst("h1")?.text()?.trim().orEmpty()
-        if (title.isEmpty()) {
-            title = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim().orEmpty()
-        }
-        if (title.isEmpty()) {
-            title = doc.title().substringBefore("|").substringBefore("- ToPhim").trim()
-        }
-
-        var poster = ""
-        val imgs = doc.select("img")
-        val posterImg = imgs.firstOrNull { it.attr("alt").trim() == title && title.isNotEmpty() }
-            ?: imgs.firstOrNull {
-                val s = it.absUrl("data-src") + it.absUrl("src")
-                s.contains("tmdb") || s.contains("wsrv")
-            }
-            ?: imgs.firstOrNull { imgUrl(it).contains(".jpg") }
-        if (posterImg != null) poster = imgUrl(posterImg)
-
-        // Meta: quet cac dong "Nhan: gia tri"
-        val labels = listOf(
-            "Trạng thái", "Đã chiếu", "Loại", "Thời lượng", "Chất lượng",
-            "Ngôn ngữ", "Thể loại", "Quốc gia", "Đạo diễn", "Diễn viên", "Năm phát hành"
+        if (q.isNotEmpty()) q.append('&')
+        q.append("page=").append(page)
+        val o = getJsonObject("/movies/search?$q")
+        val meta = o.optJSONObject("meta")
+        return SearchPage(
+            movies = moviesFromArray(o.optJSONArray("result")),
+            totalPages = meta?.optInt("totalPages", 1) ?: 1,
+            total = meta?.optInt("total", 0) ?: 0
         )
-        val metaLines = ArrayList<String>()
-        val seenLabels = HashSet<String>()
-        for (el in doc.select("li, tr, p")) {
-            val t = el.text().trim()
-            if (t.length > 140) continue
-            for (label in labels) {
-                if (label in seenLabels) continue
-                if (t.startsWith(label, true) && t.contains(":")) {
-                    metaLines.add(t)
-                    seenLabels.add(label)
-                    break
+    }
+
+    fun searchKeyword(keyword: String, page: Int): SearchPage =
+        searchMovies(mapOf("keyword" to keyword), page)
+
+    fun fetchHot(): List<Movie> =
+        moviesFromArray(getJsonObject("/movies/hot").optJSONArray("result"))
+
+    /** Cac muc cua trang chu dung nhu tren web ("Phim Song Ngu", ...). */
+    fun fetchHomeSections(): List<HomeSection> {
+        val out = ArrayList<HomeSection>()
+        var page = 1
+        var totalPages = 1
+        while (page <= totalPages && page <= 3) {
+            val o = getJsonObject("/lists/homepageLists?page=$page&limit=15")
+            val result = o.optJSONObject("result") ?: break
+            totalPages = result.optInt("totalPages", 1)
+            val cols = result.optJSONArray("collections") ?: break
+            for (i in 0 until cols.length()) {
+                val c = cols.optJSONObject(i) ?: continue
+                val movies = moviesFromArray(c.optJSONArray("movies"))
+                val name = c.optString("name")
+                if (name.isNotEmpty() && movies.isNotEmpty()) {
+                    out.add(HomeSection(name, movies))
                 }
             }
-            if (metaLines.size >= 8) break
+            page++
         }
-        if (metaLines.isEmpty()) {
-            yearRegex.find(doc.selectFirst("h1")?.parent()?.text() ?: "")?.value
-                ?.let { metaLines.add("Năm: $it") }
+        return out
+    }
+
+    // ---------------- Chi tiet + danh sach tap ----------------
+
+    fun fetchDetail(detailUrl: String): MovieDetail {
+        val slug = slugOf(rebase(detailUrl))
+        val o = getJsonObject("/movies/by-slug/$slug")
+        val m = o.optJSONObject("movie")
+            ?: throw Exception("API khong tra ve phim $slug")
+        val movie = movieFromJson(m)
+
+        val meta = ArrayList<String>()
+        val origin = m.optString("origin_name")
+        if (origin.isNotBlank() && origin != movie.title) meta.add("Tên gốc: $origin")
+        val year = m.optInt("publish_year", 0)
+        if (year > 0) meta.add("Năm phát hành: $year")
+        m.optString("quality").takeIf { it.isNotBlank() }
+            ?.let { meta.add("Chất lượng: $it") }
+        m.optString("language").takeIf { it.isNotBlank() }
+            ?.let { meta.add("Ngôn ngữ: $it") }
+        m.optString("episode_time").takeIf { it.isNotBlank() }
+            ?.let { meta.add("Thời lượng: $it") }
+        if (m.optString("type") == "series") {
+            val curEp = m.optString("episode_current")
+            val totEp = m.optString("episode_total")
+            meta.add("Số tập: $curEp/$totEp")
+        }
+        val imdb = m.optDouble("imdb_rating", 0.0)
+        if (imdb > 0) meta.add("Điểm IMDb: $imdb")
+        val cats = namesOf(m.optJSONArray("categories"))
+        if (cats.isNotEmpty()) meta.add("Thể loại: ${cats.joinToString(", ")}")
+        val dirs = namesOf(m.optJSONArray("directors"))
+        if (dirs.isNotEmpty()) meta.add("Đạo diễn: ${dirs.joinToString(", ")}")
+        val acts = namesOf(m.optJSONArray("actors"))
+        if (acts.isNotEmpty()) meta.add("Diễn viên: ${acts.take(8).joinToString(", ")}")
+
+        val descHtml = m.optString("description")
+        val description = if (descHtml.isBlank()) "" else try {
+            org.jsoup.Jsoup.parse(descHtml).text()
+        } catch (e: Exception) {
+            descHtml.replace(Regex("<[^>]+>"), " ").trim()
         }
 
-        var description = ""
-        val introHead = doc.select("h2, h3").firstOrNull {
-            it.text().contains("Nội dung", true) || it.text().contains("Giới thiệu", true)
-        }
-        if (introHead != null) {
-            var sib = introHead.nextElementSibling()
-            val sb = StringBuilder()
-            while (sib != null && sb.length < 1500 && !sib.tagName().equals("h2", true)) {
-                sb.append(sib.text()).append("\n")
-                sib = sib.nextElementSibling()
-            }
-            description = sb.toString().trim()
-        }
-        if (description.isEmpty()) {
-            description = doc.selectFirst("meta[name=description]")?.attr("content")?.trim() ?: ""
-        }
-
-        // Danh sach tap: gom theo may chu. Web co HAI dang link xem:
-        // - Dang duong dan /xem/{slug}/{tap}={server}: luoi tap phim bo
-        // - Dang tham so /xem/{slug}?ep={id}: phim le chi co nut "Xem
-        //   Ngay" (vd cac phim 18+ nhu Tam Giac Homejack)
-        // Ban cu cat bo phan "?..." roi moi doi chieu mau co dau "/" o
-        // cuoi slug nen dang tham so bi loai toan bo -> phim le nao cung
-        // ra 0 tap du trang chi tiet tai duoc binh thuong.
-        val groups = LinkedHashMap<String, LinkedHashMap<String, Episode>>()
-        for (a in doc.select("a[href]")) {
-            val href = a.absUrl("href").trimEnd('/')
-            val path = href.substringBefore("?")
-            if (!path.contains("/xem/$slug/")) continue
-            val tail = path.substringAfter("/xem/$slug/")
-            val epSegment = tail.substringBefore("=")
-            val serverKey = tail.substringAfter("=", "")
-            val label = a.text().trim().ifBlank {
-                if (epSegment.all { it.isDigit() } && epSegment.isNotEmpty()) "Tập $epSegment"
-                else epSegment.replace('-', ' ')
-            }
-            if (label.isEmpty()) continue
-            val g = groups.getOrPut(serverKey) { LinkedHashMap() }
-            g[href] = Episode(label, href)
-        }
-        if (groups.isEmpty()) {
-            // Khong co luoi tap dang duong dan -> tim nut xem dang ?ep=
-            // (giu nguyen ca doan ?ep={id}: do la dinh danh cua tap)
-            for (a in doc.select("a[href]")) {
-                val href = a.absUrl("href").trimEnd('/')
-                if (!href.substringBefore("?").endsWith("/xem/$slug")) continue
-                if (!href.contains("?ep=")) continue
-                val label = a.text().trim().ifBlank { "Xem phim" }
-                val g = groups.getOrPut("") { LinkedHashMap() }
-                g[href] = Episode(label, href)
-            }
-        }
-        val servers = groups.entries.mapIndexed { idx, (_, eps) ->
-            val sorted = eps.values.sortedWith(
-                compareBy({ epNum(it.name) ?: Double.MAX_VALUE }, { it.name })
-            )
-            ServerGroup("Máy chủ ${idx + 1}", sorted)
-        }
-
+        val movieId = m.optLong("id", 0)
+        val servers = if (movieId > 0) fetchEpisodeGroups(movieId) else emptyList()
         return MovieDetail(
-            movie = Movie(title.ifEmpty { slug }, url, poster),
-            meta = metaLines.joinToString("\n"),
+            movie = movie,
+            meta = meta.joinToString("\n"),
             description = description,
             servers = servers
         )
     }
 
+    /** Ten trong mang doi tuong ({name}) hoac mang chuoi thang. */
+    private fun namesOf(arr: JSONArray?): List<String> {
+        if (arr == null) return emptyList()
+        val out = ArrayList<String>()
+        for (i in 0 until arr.length()) {
+            val v = arr.opt(i)
+            val name = when (v) {
+                is JSONObject -> v.optString("name")
+                is String -> v
+                else -> ""
+            }
+            if (name.isNotBlank()) out.add(name)
+        }
+        return out
+    }
+
+    /**
+     * Toan bo tap cua 1 phim, gom nhom theo nhan "server" cua API —
+     * do chinh la cac BAN CHIEU (Phu de / Thuyet Minh / Long tieng /
+     * Song ngu / may chu Ha Noi...). Moi tap la 1 trang phat embed.
+     * Phim bo dai (vd Conan) API tra ~13.000 ban ghi 1 lan (~1,7 MB):
+     * van tai tron 1 lan, gom nhom + sap xep trong may.
+     */
+    fun fetchEpisodeGroups(movieId: Long): List<ServerGroup> {
+        val arr = getJsonArray("/episodes/by-idMovie/$movieId")
+        val groups = LinkedHashMap<String, LinkedHashMap<String, Episode>>()
+        for (i in 0 until arr.length()) {
+            val e = arr.optJSONObject(i) ?: continue
+            val id = e.optLong("id", 0)
+            if (id <= 0) continue
+            val server = e.optString("server").ifBlank { "Mặc định" }
+            val raw = e.optString("name").trim()
+            if (raw.isEmpty()) continue
+            val label = when {
+                raw.startsWith("Tập", true) -> raw
+                raw.equals("Full", true) -> "Full"
+                raw.matches(Regex("""\d+(\.\d+)?""")) -> "Tập $raw"
+                else -> raw
+            }
+            val g = groups.getOrPut(server) { LinkedHashMap() }
+            if (!g.containsKey(label)) {
+                g[label] = Episode(label, embedUrl(id))
+            }
+        }
+        return groups.entries.map { (server, eps) ->
+            val sorted = eps.values.sortedWith(
+                compareBy({ epNum(it.name) ?: Double.MAX_VALUE }, { it.name })
+            )
+            ServerGroup(server, sorted)
+        }
+    }
+
     private fun epNum(name: String): Double? =
         Regex("""[\d]+(?:\.[\d]+)?""").find(name)?.value?.toDoubleOrNull()
 
-    // ---------------- Trang xem: lay link phat video ----------------
+    // ---------------- Bang ma the loai / quoc gia ----------------
 
-    /**
-     * Trich cac nguon phat tu trang xem (xac thuc tren web that 22/10/2026):
-     * - Trang xem KHONG co san <iframe>: link phat nam trong thuoc tinh
-     *   data-embed (may chu playembed.vip/player/{hash}) va data-embedbackup
-     *   (may chu du phong, la file HLS .m3u8 thang tren play.vinahost.id).
-     * - iframe chi duoc tao bang JS sau khi nguoi dung bam nut phat.
-     */
-    fun extractPlayers(doc: Document): PlayerLinks {
-        var hls = ""
-        var embed = ""
-        val backupEl = doc.selectFirst("[data-embedbackup]")
-        if (backupEl != null) {
-            hls = backupEl.attr("data-embedbackup").trim()
+    fun fetchCategories(): List<Taxon> = fetchTaxons("/categories")
+
+    fun fetchRegions(): List<Taxon> = fetchTaxons("/regions")
+
+    private fun fetchTaxons(path: String): List<Taxon> {
+        val out = ArrayList<Taxon>()
+        var page = 1
+        var totalPages = 1
+        while (page <= totalPages && page <= 5) {
+            val o = getJsonObject("$path?limit=100&page=$page")
+            val meta = o.optJSONObject("meta")
+            totalPages = meta?.optInt("totalPages", 1) ?: 1
+            val data = o.optJSONArray("data") ?: break
+            for (i in 0 until data.length()) {
+                val t = data.optJSONObject(i) ?: continue
+                val id = t.optInt("id", 0)
+                val name = t.optString("name")
+                if (id > 0 && name.isNotBlank()) {
+                    out.add(Taxon(id, name, t.optString("slug")))
+                }
+            }
+            page++
         }
-        val embedEl = doc.selectFirst("[data-embed]")
-        if (embedEl != null) {
-            embed = embedEl.attr("data-embed").trim()
-        }
-        if (hls.isEmpty()) {
-            // Du phong: tim thang link .m3u8 trong HTML
-            val m = Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").find(doc.html())
-            if (m != null) hls = m.value
-        }
-        if (embed.isEmpty()) {
-            val iframes = doc.select("iframe[src]").map { it.absUrl("src") }
-                .filter { it.startsWith("http") }
-            embed = iframes.firstOrNull { it.contains("playembed", true) } ?: ""
-        }
-        if (hls.startsWith("//")) hls = "https:$hls"
-        if (embed.startsWith("//")) embed = "https:$embed"
-        // playembed: iframe that cua web co dang /player/{hash}/sub
-        if (embed.contains("playembed") && Regex("""/player/[A-Za-z0-9]+$""").containsMatchIn(embed)) {
-            embed = "$embed/sub"
-        }
-        return PlayerLinks(hls = hls, embed = embed)
+        return out
     }
 }

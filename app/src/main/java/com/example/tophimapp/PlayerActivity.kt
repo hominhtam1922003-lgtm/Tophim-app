@@ -19,20 +19,19 @@ import java.io.ByteArrayInputStream
 import kotlin.concurrent.thread
 
 /**
- * Trinh phat video - NGUYEN TAC TU BAN 1.5 ("phuong an triet de" nguoi
- * dung da duyet): CHI phat luong video truc tiep (.m3u8/.mp4) bang
- * player noi bo cua app. TUYET DOI khong nhung iframe player cua ben
- * thu ba (playembed) nua: do la iframe khac nguon, quang cao ben trong
- * no (video mo dau, banner de) khong the nao loc tu ben ngoai - do
- * chinh la cua ro quang cao duy nhat con sot o ban 1.4.1.
- * Nguon phat lay bang 3 tang:
- * 1) data-embedbackup trong HTML trang xem = HLS thang.
- * 2) Bo do chay trang xem trong WebView ngam va BAT MOI REQUEST
- *    .m3u8/.mp4 o tang mang - ke ca request phat ra tu ben trong
- *    iframe playembed: DOM thi web giau duoc, nhung muon phat phim
- *    thi luong video bat buoc qua mang va bi hung o do.
- * 3) Playlist HLS con bi loc quang cao ghep o dau bang PlaylistCleaner.
- * Khong lay duoc luong sach thi bao ro, khong mo iframe/trang web.
+ * Trinh phat video — ban 2.0 (nguon cobephim qua API).
+ * Dau vao la trang phat CHINH THUC cua web: {host API}/embed/{tap}.
+ * Thu tu uu tien:
+ * 1) Bo do chay trang embed trong WebView ngam va BAT MOI REQUEST
+ *    .m3u8/.mp4 o tang mang; luong bat duoc phai qua kiem tra thoi
+ *    luong (chong quang cao mo dau) roi phat bang player sach noi bo
+ *    cua app (HLS con qua PlaylistCleaner loc quang cao ghep).
+ * 2) Khong bat duoc luong thang: phat bang chinh trang embed chinh
+ *    thuc do trong khung da khoa (cam popup, khoa dieu huong sang
+ *    host la, AdBlock o tang mang). Day la player cua chinh web nguon
+ *    (khong phai iframe quang cao cua ben thu ba nhu playembed xua).
+ * Nut "Doi ban" chuyen giua cac luong bat duoc va cac BAN CHIEU khac
+ * (Phu de / Thuyet Minh / Long tieng) cua cung 1 tap.
  */
 class PlayerActivity : AppCompatActivity() {
 
@@ -40,6 +39,10 @@ class PlayerActivity : AppCompatActivity() {
         const val EXTRA_WATCH_URL = "watch_url"
         const val EXTRA_TITLE = "movie_title"
         const val EXTRA_EPISODE = "episode_name"
+        // Cac ban chieu khac cua cung 1 tap (nhan + trang phat embed),
+        // DetailActivity gui kem de doi ban ngay trong player
+        const val EXTRA_SERVER_NAMES = "server_names"
+        const val EXTRA_SERVER_URLS = "server_urls"
 
         // Do tim luong phat tren trang xem dang chay that: dia chi + THOI
         // LUONG cua the <video> + moi tai nguyen .m3u8/.mp4 trang da tai
@@ -116,8 +119,8 @@ class PlayerActivity : AppCompatActivity() {
         """
     }
 
-    private enum class Kind { HLS, DIRECT }
-    private data class Candidate(val kind: Kind, val url: String)
+    private enum class Kind { HLS, DIRECT, EMBEDPAGE }
+    private data class Candidate(val kind: Kind, val url: String, val label: String = "")
 
     private lateinit var webView: WebView
     private lateinit var progress: ProgressBar
@@ -126,6 +129,9 @@ class PlayerActivity : AppCompatActivity() {
     private var customCallback: WebChromeClient.CustomViewCallback? = null
     private var targetHost: String = ""
     private var watchUrl: String = ""
+    // Cac ban chieu khac cua cung tap (trang embed + nhan ban chieu)
+    private var versionUrls: List<String> = emptyList()
+    private var versionNames: List<String> = emptyList()
     private var candidates: List<Candidate> = emptyList()
     private var candidateIndex = 0
     private var errorToastShown = false
@@ -156,6 +162,8 @@ class PlayerActivity : AppCompatActivity() {
         watchUrl = TophimSource.rebase(
             intent.getStringExtra(EXTRA_WATCH_URL) ?: run { finish(); return }
         )
+        versionUrls = intent.getStringArrayListExtra(EXTRA_SERVER_URLS) ?: emptyList()
+        versionNames = intent.getStringArrayListExtra(EXTRA_SERVER_NAMES) ?: emptyList()
         val movieTitle = intent.getStringExtra(EXTRA_TITLE) ?: ""
         val epName = intent.getStringExtra(EXTRA_EPISODE) ?: ""
         title = if (epName.isNotEmpty()) "$movieTitle - $epName" else movieTitle
@@ -273,58 +281,26 @@ class PlayerActivity : AppCompatActivity() {
         """.trimIndent()
     }
 
-    /** Lay cac nguon phat tu trang xem: Jsoup truoc, WebView du phong. */
+    /**
+     * Diem vao phat (ban 2.0): watchUrl la trang phat embed chinh thuc
+     * cua web ({host API}/embed/{id tap}) — chay bo do tren chinh trang
+     * do de bat luong thang. Neu dau vao la file video thang thi phat
+     * ngay; URL la (lich su cu cua nguon xua) thi bao ro, khong do nua.
+     */
     private fun resolveAndPlay() {
         progress.visibility = View.VISIBLE
-        thread {
-            var links = PlayerLinks()
-            try {
-                links = TophimSource.extractPlayers(TophimSource.fetchDoc(watchUrl))
-            } catch (e: Exception) {
-                // Du phong WebView
+        val path = watchUrl.substringBefore("?").lowercase()
+        when {
+            path.endsWith(".m3u8") -> {
+                candidates = listOf(Candidate(Kind.HLS, watchUrl, "Luồng trực tiếp"))
+                playCandidate(0)
             }
-            runOnUiThread {
-                // Ban 1.5: chi HLS thang moi dung ngay; co moi embed
-                // thi KHONG nhung iframe nua ma di tiep xuong bo do de
-                // bat luong that o tang mang
-                if (links.hls.isNotEmpty()) {
-                    startWith(links)
-                } else {
-                    WebFetcher.fetchHtml(this, watchUrl) { html ->
-                        var l2 = PlayerLinks()
-                        if (html != null) {
-                            try {
-                                l2 = TophimSource.extractPlayers(
-                                    TophimSource.parseHtml(html, watchUrl)
-                                )
-                            } catch (e: Exception) {
-                                // bo qua
-                            }
-                        }
-                        if (l2.hls.isNotEmpty()) {
-                            startWith(l2)
-                        } else {
-                            // Boc tinh khong thay gi: phim dung trinh phat
-                            // rieng cua web -> do luong truc tiep
-                            probeRuntime()
-                        }
-                    }
-                }
+            path.endsWith(".mp4") -> {
+                candidates = listOf(Candidate(Kind.DIRECT, watchUrl, "Luồng trực tiếp"))
+                playCandidate(0)
             }
-        }
-    }
-
-    private fun startWith(links: PlayerLinks) {
-        val list = ArrayList<Candidate>()
-        if (links.hls.isNotEmpty()) list.add(Candidate(Kind.HLS, links.hls))
-        // Ban 1.5: links.embed co duoc cung KHONG dung - khong nhung
-        // iframe playembed nua (xem ghi chu dau file). KHONG phuong an
-        // "mo nguyen trang xem cua web": trang do day quang cao co bac.
-        candidates = list
-        if (list.isEmpty()) {
-            probeRuntime()
-        } else {
-            playCandidate(0)
+            watchUrl.contains("/embed/") -> probeRuntime()
+            else -> showNoSource()
         }
     }
 
@@ -418,15 +394,18 @@ class PlayerActivity : AppCompatActivity() {
                 return null
             }
 
-            // Khoa khung chinh cua WebView do: chi o lai host trang xem
-            // (+ host player/cloudflare), khong bi popunder cuop trang
+            // Khoa khung chinh cua WebView do: chi o lai host trang
+            // phat + cac host luong/phat cua web, khong bi popunder
+            // cuop trang sang trang quang cao
             override fun shouldOverrideUrlLoading(
                 view: WebView?, request: WebResourceRequest?
             ): Boolean {
                 val url = request?.url ?: return false
                 if (request.isForMainFrame) {
                     val h = url.host ?: ""
-                    val ok = h == watchHost || h.endsWith("playembed.vip") ||
+                    val ok = h == watchHost || h.endsWith("darkbytes.xyz") ||
+                        h.endsWith("streamvsmov.com") ||
+                        h.endsWith("streamuuzy.com") ||
                         h.endsWith("cloudflare.com") || h.isEmpty()
                     if (!ok) return true
                 }
@@ -494,15 +473,27 @@ class PlayerActivity : AppCompatActivity() {
                 val mp4First = synchronized(netMp4) { netMp4.firstOrNull() } ?: ""
                 addStream(mp4First)
             }
-            // Ban 1.5: het phim thi thoi - KHONG con du phong iframe
-            // playembed (cua ro quang cao), danh sach rong -> bao
-            // "chua co nguon sach" thay vi phat kem quang cao
-            candidates = list
-            if (list.isEmpty()) {
-                showNoSource()
-            } else {
-                playCandidate(0)
+            // Ban 2.0: co luong thang thi phat luong (sach nhat); kem
+            // theo trang embed cua ban dang xem + cac ban chieu khac
+            // lam ung vien doi ban. Khong bat duoc luong nao -> phat
+            // bang chinh trang embed chinh thuc (da khoa popup/dieu
+            // huong/chan quang cao o tang mang) chu khong con bao
+            // "khong co nguon" nhu thoi nguon cu.
+            val out = ArrayList<Candidate>()
+            for (c in list) out.add(Candidate(c.kind, c.url, "Luồng trực tiếp"))
+            out.add(
+                Candidate(
+                    Kind.EMBEDPAGE, watchUrl,
+                    versionNameOf(watchUrl) ?: "Bản đang xem"
+                )
+            )
+            for (u in versionUrls) {
+                if (u == watchUrl) continue
+                if (out.any { it.url == u }) continue
+                out.add(Candidate(Kind.EMBEDPAGE, u, versionNameOf(u) ?: "Bản khác"))
             }
+            candidates = out
+            playCandidate(0)
         }
 
         fun pollProbe() {
@@ -591,14 +582,38 @@ class PlayerActivity : AppCompatActivity() {
         finish()
     }
 
+    /** Nhan ban chieu cua 1 trang phat (neu DetailActivity co gui kem). */
+    private fun versionNameOf(url: String): String? {
+        val idx = versionUrls.indexOf(url)
+        return if (idx >= 0) versionNames.getOrNull(idx) else null
+    }
+
     private fun playCandidate(index: Int) {
         if (index !in candidates.indices) return
         candidateIndex = index
         val c = candidates[index]
-        btnServer.text = "Server ${index + 1}/${candidates.size} ⟳"
+        btnServer.text = if (c.label.isNotEmpty()) {
+            "${c.label} • ${index + 1}/${candidates.size} ⟳"
+        } else {
+            "Server ${index + 1}/${candidates.size} ⟳"
+        }
         btnServer.visibility = if (candidates.size > 1) View.VISIBLE else View.GONE
         progress.visibility = View.VISIBLE
         when (c.kind) {
+            Kind.EMBEDPAGE -> {
+                // Phat bang trang embed chinh thuc cua web trong khung
+                // da khoa: cam popup (onCreateWindow), khoa khung chinh
+                // theo host trang phat (shouldOverrideUrlLoading dung
+                // targetHost), AdBlock o tang mang
+                targetHost = hostOf(c.url)
+                webView.loadUrl(
+                    c.url,
+                    mapOf(
+                        "User-Agent" to TophimSource.UA,
+                        "Referer" to TophimSource.BASE + "/"
+                    )
+                )
+            }
             Kind.HLS -> {
                 targetHost = ""
                 // Loc quang cao ghep trong playlist truoc khi phat

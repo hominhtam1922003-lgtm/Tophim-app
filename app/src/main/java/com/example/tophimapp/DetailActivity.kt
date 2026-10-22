@@ -120,48 +120,21 @@ class DetailActivity : AppCompatActivity() {
     private fun loadDetail() {
         findViewById<ProgressBar>(R.id.detailProgress).visibility = View.VISIBLE
         thread {
-            RemoteConfig.awaitReady(3500)
+            RemoteConfig.awaitReady(2500)
             var d: MovieDetail? = null
             try {
                 d = TophimSource.fetchDetail(movieUrl)
             } catch (e: Exception) {
-                // Du phong WebView
+                // Bao loi o duoi
             }
             runOnUiThread {
                 if (d != null && d.servers.isNotEmpty()) {
                     showDetail(d)
-                } else {
-                    loadDetailViaWeb()
-                }
-            }
-        }
-    }
-
-    private fun loadDetailViaWeb(attempt: Int = 1) {
-        WebFetcher.fetchHtml(this, movieUrl) { html ->
-            var d: MovieDetail? = null
-            if (html != null) {
-                try {
-                    d = TophimSource.parseDetail(TophimSource.parseHtml(html, movieUrl), movieUrl)
-                } catch (e: Exception) {
-                    // bo qua
-                }
-            }
-            runOnUiThread {
-                if (d != null && d.servers.isNotEmpty()) {
-                    showDetail(d)
-                } else if (attempt < 2) {
-                    // Thu lai 1 lan: lan tai dau co the vua bam qua cong
-                    // tuoi/xac minh xong, anh chup trang chua kip la
-                    // trang that (trang thai mo khoa da duoc luu ben
-                    // nen lan 2 thuong vao thang)
-                    android.os.Handler(android.os.Looper.getMainLooper())
-                        .postDelayed({ loadDetailViaWeb(attempt + 1) }, 1500)
                 } else {
                     findViewById<ProgressBar>(R.id.detailProgress).visibility = View.GONE
                     Toast.makeText(
                         this,
-                        "Không tải được danh sách tập (web đang chặn). Thử lại sau ít phút.",
+                        "Không tải được danh sách tập. Kiểm tra mạng rồi mở lại phim nhé.",
                         Toast.LENGTH_LONG
                     ).show()
                 }
@@ -218,11 +191,23 @@ class DetailActivity : AppCompatActivity() {
 
     private fun playEpisode(ep: Episode) {
         val d = detail ?: return
-        db.addHistory(d.movie, ep.name, TophimSource.rebase(ep.url))
+        db.addHistory(d.movie, ep.name, ep.url)
         val i = Intent(this, PlayerActivity::class.java)
-        i.putExtra(PlayerActivity.EXTRA_WATCH_URL, TophimSource.rebase(ep.url))
+        i.putExtra(PlayerActivity.EXTRA_WATCH_URL, ep.url)
         i.putExtra(PlayerActivity.EXTRA_TITLE, d.movie.title)
         i.putExtra(PlayerActivity.EXTRA_EPISODE, ep.name)
+        // Cung 1 tap o cac ban chieu khac (Phu de / Thuyet Minh / Long
+        // tieng...): gui kem de nut Doi ban trong player chuyen duoc
+        // thang sang ban chieu khac cua dung tap nay
+        val versionNames = ArrayList<String>()
+        val versionUrls = ArrayList<String>()
+        for (group in d.servers) {
+            val same = group.episodes.firstOrNull { it.name == ep.name } ?: continue
+            versionNames.add(group.name)
+            versionUrls.add(same.url)
+        }
+        i.putStringArrayListExtra(PlayerActivity.EXTRA_SERVER_NAMES, versionNames)
+        i.putStringArrayListExtra(PlayerActivity.EXTRA_SERVER_URLS, versionUrls)
         startActivity(i)
     }
 }

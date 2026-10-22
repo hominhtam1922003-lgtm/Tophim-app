@@ -1,6 +1,5 @@
 package com.example.tophimapp
 
-import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -15,43 +14,62 @@ import com.google.android.material.button.MaterialButton
 import kotlin.concurrent.thread
 
 /**
- * Tab duyet phim theo loai:
- * - SINGLE: phim le (/phim-le)
- * - SERIES: phim bo (/phim-bo)
- * Moi lan mo tab deu tai lai tu web nen phim moi ra la thay ngay.
+ * Tab duyet phim theo muc (ban 2.0 - nguon API): moi muc la 1 truy van
+ * /movies/search (phim le = type=movie, phim bo = type=series, chieu
+ * rap = the loai "Chiếu rạp") kem phan trang theo meta.totalPages.
+ * Che do generic (title + params) dung cho duyet theo the loai/quoc gia.
  */
 class BrowseFragment : Fragment() {
 
     companion object {
         const val KIND_SINGLE = "single"
         const val KIND_SERIES = "series"
-        const val KIND_ADULT = "adult"
+        const val KIND_CINEMA = "cinema"
+        const val KIND_PARAMS = "params"
+
         fun newInstance(kind: String): BrowseFragment {
             val f = BrowseFragment()
             f.arguments = Bundle().apply { putString("kind", kind) }
             return f
         }
+
+        fun newInstanceParams(
+            title: String, genres: String = "", countries: String = "",
+            type: String = ""
+        ): BrowseFragment {
+            val f = BrowseFragment()
+            f.arguments = Bundle().apply {
+                putString("kind", KIND_PARAMS)
+                putString("title", title)
+                putString("genres", genres)
+                putString("countries", countries)
+                putString("typeParam", type)
+            }
+            return f
+        }
+
+        // Ma the loai "Chieu rap": tra tu bang ma API theo slug, du
+        // phong 25 (da xac thuc truc tiep 22/10/2026)
+        @Volatile
+        private var cinemaGenreId: String = "25"
+        @Volatile
+        private var cinemaResolved = false
     }
 
     private lateinit var adapter: MovieGridAdapter
     private lateinit var swipe: SwipeRefreshLayout
     private lateinit var progress: android.widget.ProgressBar
-    private lateinit var btnVerify: com.google.android.material.button.MaterialButton
     private lateinit var btnLoadMore: MaterialButton
-    private lateinit var tvDiag: android.widget.TextView
-    // Dong chan doan tung duong tai (hien khi that bai toan tap de nguoi
-    // dung chup lai - thay vi app im lang nhu cac ban truoc)
-    private val diagLines = ArrayList<String>()
+    private lateinit var tvError: android.widget.TextView
+
     private var kind: String = KIND_SERIES
-    private var loading = false
-    private var verifyAutoOpened = false
-    // Phan trang ?page=N: duong dan nao tai duoc trang 1 thi dung tiep
-    // cho cac trang sau; het phim (trang tra ve rong/trung) thi an nut
+    private var title: String = ""
+    private var params: Map<String, String> = emptyMap()
     private val items = ArrayList<Movie>()
-    private var workingPath: String? = null
-    private var currentPage = 1
-    private var hasMore = false
+    private var loading = false
     private var loadingMore = false
+    private var currentPage = 1
+    private var totalPages = 1
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -61,6 +79,18 @@ class BrowseFragment : Fragment() {
         kind = arguments?.getString("kind") ?: KIND_SERIES
         val v = inflater.inflate(R.layout.fragment_home, container, false)
         v.findViewById<View>(R.id.etSearch).visibility = View.GONE
+        v.findViewById<View>(R.id.btnVerify).visibility = View.GONE
+        val tvTitle = v.findViewById<android.widget.TextView>(R.id.tvBrowseTitle)
+        title = when (kind) {
+            KIND_SINGLE -> "Phim lẻ"
+            KIND_SERIES -> "Phim bộ"
+            KIND_CINEMA -> "Chiếu rạp"
+            else -> arguments?.getString("title") ?: ""
+        }
+        if (title.isNotEmpty()) {
+            tvTitle.text = title
+            tvTitle.visibility = View.VISIBLE
+        }
         progress = v.findViewById(R.id.progress)
         swipe = v.findViewById(R.id.swipeRefresh)
         val rv = v.findViewById<RecyclerView>(R.id.rvComics)
@@ -71,9 +101,7 @@ class BrowseFragment : Fragment() {
         btnLoadMore.text = "Tải thêm phim"
         btnLoadMore.visibility = View.GONE
         btnLoadMore.setOnClickListener { loadMore() }
-        btnVerify = v.findViewById(R.id.btnVerify)
-        btnVerify.setOnClickListener { openVerify() }
-        tvDiag = v.findViewById(R.id.tvLoadError)
+        tvError = v.findViewById(R.id.tvLoadError)
         swipe.setOnRefreshListener { load() }
         load()
         return v
@@ -87,243 +115,114 @@ class BrowseFragment : Fragment() {
         startActivity(i)
     }
 
+    /** Bo tham so truy van cho muc nay (chieu rap can tra bang ma truoc). */
+    private fun resolveParams(): Map<String, String> {
+        return when (kind) {
+            KIND_SINGLE -> mapOf("type" to "movie")
+            KIND_SERIES -> mapOf("type" to "series")
+            KIND_CINEMA -> {
+                if (!cinemaResolved) {
+                    try {
+                        val cats = TophimSource.fetchCategories()
+                        cats.firstOrNull { it.slug == "chieu-rap" }
+                            ?.let { cinemaGenreId = it.id.toString() }
+                    } catch (e: Exception) {
+                        // Giu ma du phong 25
+                    }
+                    cinemaResolved = true
+                }
+                mapOf("genres" to cinemaGenreId)
+            }
+            else -> {
+                val m = LinkedHashMap<String, String>()
+                arguments?.getString("genres")?.takeIf { it.isNotBlank() }
+                    ?.let { m["genres"] = it }
+                arguments?.getString("countries")?.takeIf { it.isNotBlank() }
+                    ?.let { m["countries"] = it }
+                arguments?.getString("typeParam")?.takeIf { it.isNotBlank() }
+                    ?.let { m["type"] = it }
+                m
+            }
+        }
+    }
+
     private fun load() {
         if (loading) return
         loading = true
-        diagLines.clear()
-        if (::tvDiag.isInitialized) tvDiag.visibility = View.GONE
-        items.clear()
-        workingPath = null
-        currentPage = 1
-        hasMore = false
+        if (::tvError.isInitialized) tvError.visibility = View.GONE
         if (!swipe.isRefreshing) progress.visibility = View.VISIBLE
-        // Tab 18+: Jsoup khong qua noi cong tuoi (can cookie xac nhan
-        // tuoi) -> di duong WebView TRUOC; neu WebView cung that bai moi
-        // thu Jsoup sau. Cac tab khac giu thu tu Jsoup -> WebView.
-        if (kind == KIND_ADULT) {
-            loadViaWeb(adultFallbackToJsoup = true)
-            return
-        }
         thread {
-            RemoteConfig.awaitReady(3500)
-            var path: String? = null
-            var list: List<Movie> = emptyList()
+            RemoteConfig.awaitReady(2500)
+            params = resolveParams()
+            var page: SearchPage? = null
             try {
-                val r = TophimSource.fetchCategoryPage(kind, 1)
-                path = r.first
-                list = r.second
+                page = TophimSource.searchMovies(params, 1)
             } catch (e: Exception) {
-                // Du phong WebView o duoi
+                // Bao loi o duoi
             }
             activity?.runOnUiThread {
-                diagLines.add("Jsoup danh mục: ${list.size} phim")
-                if (list.isNotEmpty()) {
-                    workingPath = path
-                    showFirstPage(list)
-                } else {
-                    loadViaWeb()
+                loading = false
+                swipe.isRefreshing = false
+                progress.visibility = View.GONE
+                if (page != null && page.movies.isNotEmpty()) {
+                    items.clear()
+                    items.addAll(page.movies)
+                    currentPage = 1
+                    totalPages = page.totalPages
+                    adapter.submit(items.toList())
+                    updateLoadMoreVisibility()
+                } else if (items.isEmpty()) {
+                    tvError.visibility = View.VISIBLE
+                    tvError.text =
+                        "Mục này chưa tải được. Kiểm tra kết nối mạng rồi vuốt xuống để thử lại nhé."
+                    updateLoadMoreVisibility()
                 }
             }
         }
-    }
-
-    private fun showFirstPage(list: List<Movie>) {
-        items.clear()
-        appendUnique(list)
-        adapter.submit(items.toList())
-        hasMore = true
-        updateLoadMoreVisibility()
-        loading = false
-        swipe.isRefreshing = false
-        progress.visibility = View.GONE
-        if (::tvDiag.isInitialized) tvDiag.visibility = View.GONE
-    }
-
-    /** Them phim moi (bo qua phim da co) - tra ve so phim them duoc. */
-    private fun appendUnique(list: List<Movie>): Int {
-        val known = items.map { it.url }.toHashSet()
-        var added = 0
-        for (m in list) {
-            if (known.add(m.url)) {
-                items.add(m)
-                added++
-            }
-        }
-        return added
     }
 
     private fun updateLoadMoreVisibility() {
         if (::btnLoadMore.isInitialized) {
             btnLoadMore.visibility =
-                if (hasMore && items.isNotEmpty()) View.VISIBLE else View.GONE
+                if (currentPage < totalPages && items.isNotEmpty()) View.VISIBLE
+                else View.GONE
             btnLoadMore.isEnabled = !loadingMore
         }
     }
 
-    /** Nut "Tai them phim": lat sang trang ?page=N+1 cua danh muc. */
     private fun loadMore() {
-        val path = workingPath ?: return
-        if (loading || loadingMore || !hasMore) return
+        if (loading || loadingMore || currentPage >= totalPages) return
         loadingMore = true
         updateLoadMoreVisibility()
-        val nextPage = currentPage + 1
-        val url = "${TophimSource.BASE}$path?page=$nextPage"
+        val next = currentPage + 1
         thread {
-            var list: List<Movie> = emptyList()
+            var page: SearchPage? = null
             try {
-                list = TophimSource.parseList(TophimSource.fetchDoc(url))
+                page = TophimSource.searchMovies(params, next)
             } catch (e: Exception) {
-                // Thu WebView ben duoi
+                // Giu nguyen trang thai
             }
             activity?.runOnUiThread {
-                if (list.isNotEmpty()) {
-                    applyMorePage(list, nextPage)
-                } else {
-                    val ctx = context
-                    if (ctx == null) {
-                        loadingMore = false
-                        updateLoadMoreVisibility()
-                        return@runOnUiThread
-                    }
-                    WebFetcher.fetchHtml(ctx, url) { html ->
-                        var l2: List<Movie> = emptyList()
-                        if (html != null) {
-                            try {
-                                l2 = TophimSource.parseList(
-                                    TophimSource.parseHtml(html, url)
-                                )
-                            } catch (e: Exception) {
-                                // bo qua
-                            }
-                        }
-                        applyMorePage(l2, nextPage)
-                    }
-                }
-            }
-        }
-    }
-
-    private fun applyMorePage(list: List<Movie>, page: Int) {
-        val added = appendUnique(list)
-        if (added > 0) {
-            currentPage = page
-            adapter.submit(items.toList())
-        } else {
-            hasMore = false
-            Toast.makeText(
-                requireContext(), "Đã tải hết phim của mục này", Toast.LENGTH_SHORT
-            ).show()
-        }
-        loadingMore = false
-        updateLoadMoreVisibility()
-    }
-
-    private fun loadViaWeb(adultFallbackToJsoup: Boolean = false) {
-        val ctx = context ?: return
-        // Duong dan ung vien dau tien cua tung loai (khop fetchCategory)
-        val paths = TophimSource.categoryPaths(kind)
-        fun tryPath(idx: Int) {
-            if (idx >= paths.size) {
-                if (adultFallbackToJsoup) {
-                    // WebView that bai toan tap: thu not Jsoup (biet dau
-                    // cookie xac nhan tuoi da co tu phien truoc)
-                    thread {
-                        var path: String? = null
-                        var list: List<Movie> = emptyList()
-                        try {
-                            val r = TophimSource.fetchCategoryPage(kind, 1)
-                            path = r.first
-                            list = r.second
-                        } catch (e: Exception) {
-                            // bo qua
-                        }
-                        activity?.runOnUiThread {
-                            if (list.isNotEmpty()) {
-                                workingPath = path
-                                showFirstPage(list)
-                            } else {
-                                loading = false
-                                swipe.isRefreshing = false
-                                progress.visibility = View.GONE
-                                showVerifyOffer()
-                            }
-                        }
-                    }
-                    return
-                }
-                activity?.runOnUiThread {
-                    loading = false
-                    swipe.isRefreshing = false
-                    progress.visibility = View.GONE
-                    showVerifyOffer()
-                }
-                return
-            }
-            val url = TophimSource.BASE + paths[idx]
-            WebFetcher.fetchHtml(ctx, url) { html ->
-                var list: List<Movie> = emptyList()
-                if (html != null) {
-                    try {
-                        list = TophimSource.parseList(TophimSource.parseHtml(html, url))
-                    } catch (e: Exception) {
-                        // Thu duong dan tiep theo
-                    }
-                }
-                val gateNote = if (html != null &&
-                    html.lowercase().contains("giới hạn độ tuổi")
-                ) " (trang vẫn còn cổng tuổi)" else ""
-                diagLines.add(
-                    "Web ${paths[idx]}: ${html?.length ?: 0} ký tự → " +
-                        "${list.size} phim$gateNote"
-                )
-                if (list.isNotEmpty()) {
-                    activity?.runOnUiThread {
-                        if (::btnVerify.isInitialized) btnVerify.visibility = View.GONE
-                        workingPath = paths[idx]
-                        showFirstPage(list)
+                loadingMore = false
+                if (page != null && page.movies.isNotEmpty()) {
+                    val known = items.map { it.url }.toHashSet()
+                    val added = page.movies.filter { known.add(it.url) }
+                    if (added.isNotEmpty()) {
+                        items.addAll(added)
+                        currentPage = next
+                        adapter.submit(items.toList())
+                    } else {
+                        totalPages = currentPage
                     }
                 } else {
-                    tryPath(idx + 1)
+                    totalPages = currentPage
+                    Toast.makeText(
+                        requireContext(), "Đã tải hết phim của mục này",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
+                updateLoadMoreVisibility()
             }
-        }
-        tryPath(0)
-    }
-
-    /** Tai that bai o moi duong: hien chan doan cu the thay vi im lang. */
-    private fun showVerifyOffer() {
-        if (::btnVerify.isInitialized) btnVerify.visibility = View.VISIBLE
-        if (::tvDiag.isInitialized) {
-            tvDiag.visibility = View.VISIBLE
-            tvDiag.text = "Mục này chưa tải được. Chẩn đoán lần tải vừa rồi:\n" +
-                diagLines.joinToString("\n") +
-                "\nChụp màn hình này gửi lại giúp mình nhé."
-        }
-        // Tab 18+ that bai khong phai do Cloudflare -> khong tu day nguoi
-        // dung sang trang xac minh (cac ban truoc lam vay nen rat kho hieu)
-        if (kind == KIND_ADULT) return
-        if (!verifyAutoOpened) {
-            verifyAutoOpened = true
-            Toast.makeText(
-                requireContext(),
-                "Web yêu cầu tick xác minh 1 lần, mình mở sẵn trang xác minh cho bạn",
-                Toast.LENGTH_LONG
-            ).show()
-            openVerify()
-        }
-    }
-
-    private fun openVerify() {
-        startActivityForResult(
-            Intent(requireContext(), VerifyActivity::class.java), HomeFragment.REQ_VERIFY
-        )
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == HomeFragment.REQ_VERIFY && resultCode == Activity.RESULT_OK) {
-            if (::btnVerify.isInitialized) btnVerify.visibility = View.GONE
-            load()
         }
     }
 }

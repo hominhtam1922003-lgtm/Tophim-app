@@ -32,6 +32,26 @@ data class PlayerLinks(
     val embed: String = ""
 )
 
+/** 1 trang ket qua cua endpoint /movies/search (co tong so trang). */
+data class SearchPage(
+    val movies: List<Movie>,
+    val totalPages: Int,
+    val total: Int
+)
+
+/** 1 muc trong trang chu (vd "Phim Song Ngữ") kem cac phim cua no. */
+data class HomeSection(
+    val name: String,
+    val movies: List<Movie>
+)
+
+/** 1 the loai / quoc gia trong bang ma cua API (cho trang Loc phim). */
+data class Taxon(
+    val id: Int,
+    val name: String,
+    val slug: String
+)
+
 data class MovieHistoryItem(
     val movieUrl: String,
     val title: String,

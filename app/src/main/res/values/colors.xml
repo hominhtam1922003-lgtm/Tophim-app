@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="tab_selected">#5B4BDB</color>
+    <color name="ic_launcher_background">#0D012E</color>
 </resources>

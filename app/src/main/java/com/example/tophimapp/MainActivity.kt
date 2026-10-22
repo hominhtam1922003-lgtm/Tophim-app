@@ -39,10 +39,14 @@ class MainActivity : AppCompatActivity() {
         val tabHome = findViewById<TextView>(R.id.tabHome)
         val tabSingle = findViewById<TextView>(R.id.tabSingle)
         val tabSeries = findViewById<TextView>(R.id.tabSeries)
-        val tabAdult = findViewById<TextView>(R.id.tabAdult)
+        val tabCinema = findViewById<TextView>(R.id.tabCinema)
+        val tabFilter = findViewById<TextView>(R.id.tabFilter)
         val tabFavorites = findViewById<TextView>(R.id.tabFavorites)
         val tabHistory = findViewById<TextView>(R.id.tabHistory)
-        tabs = listOf(tabHome, tabSingle, tabSeries, tabAdult, tabFavorites, tabHistory)
+        tabs = listOf(
+            tabHome, tabSingle, tabSeries, tabCinema, tabFilter,
+            tabFavorites, tabHistory
+        )
 
         tabHome.setOnClickListener { select(tabHome); show(HomeFragment()) }
         tabSingle.setOnClickListener {
@@ -53,10 +57,11 @@ class MainActivity : AppCompatActivity() {
             select(tabSeries)
             show(BrowseFragment.newInstance(BrowseFragment.KIND_SERIES))
         }
-        tabAdult.setOnClickListener {
-            select(tabAdult)
-            show(BrowseFragment.newInstance(BrowseFragment.KIND_ADULT))
+        tabCinema.setOnClickListener {
+            select(tabCinema)
+            show(BrowseFragment.newInstance(BrowseFragment.KIND_CINEMA))
         }
+        tabFilter.setOnClickListener { select(tabFilter); show(FilterFragment()) }
         tabFavorites.setOnClickListener {
             // Thong bao tap moi gan voi phim yeu thich:
             // chua co quyen thi xin lai tai day (Android 13+)

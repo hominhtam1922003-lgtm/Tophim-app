@@ -8,7 +8,7 @@
     <com.google.android.material.textfield.TextInputLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="Tìm phim trên Top Phim...">
+        android:hint="Tìm phim trên Cine...">
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/etSearch"
@@ -17,6 +17,17 @@
             android:imeOptions="actionSearch"
             android:inputType="text" />
     </com.google.android.material.textfield.TextInputLayout>
+
+    <TextView
+        android:id="@+id/tvBrowseTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="4dp"
+        android:paddingTop="2dp"
+        android:paddingBottom="6dp"
+        android:textSize="17sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
 
     <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
         android:id="@+id/swipeRefresh"
@@ -52,7 +63,7 @@
         android:id="@+id/btnLoadMore"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Tải thêm truyện mới" />
+        android:text="Tải thêm phim" />
 
     <ProgressBar
         android:id="@+id/progress"
